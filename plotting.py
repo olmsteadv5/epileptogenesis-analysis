@@ -393,34 +393,40 @@ def plot_global_summary(normalized_df: pd.DataFrame):
 # ---------------------------------------------------------------------------
 # Coherence summaries (mirror the correlation summaries)
 # ---------------------------------------------------------------------------
-def plot_coherence_animal_summary(group_df: pd.DataFrame):
-    """Per-animal coherence trends over time (2 stacked panels).
+def _band_label(band) -> str:
+    """Human-readable band label, e.g. (0.0, 14.0) -> '0-14 Hz'."""
+    lo, hi = band
+    return f"{lo:g}-{hi:g} Hz"
 
-    Panels: average MSC (during seizure vs pre-seizure) and peak frequency
-    (during seizure vs pre-seizure), plotted against recording time.
+
+def plot_coherence_animal_summary(
+    group_df: pd.DataFrame,
+    band_low=(0.0, 14.0),
+    band_high=(14.0, 55.0),
+):
+    """Per-animal average-coherence trends over time, split by frequency band.
+
+    Two stacked panels (low band on top, high band below); each shows the
+    during-seizure vs pre-seizure band-averaged MSC against recording time.
     """
     group = group_df.sort_values("File_Start_DT")
     animal = group["Animal_ID"].iloc[0]
     x = group["File_Start_DT"]
 
     fig, axes = plt.subplots(2, 1, figsize=(9, 9))
+    panels = [
+        (band_low, "Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
+        (band_high, "Avg_MSC_Seizure_High", "Avg_MSC_Pre_High"),
+    ]
 
-    axes[0].plot(x, group["Avg_MSC_Seizure"], color=DURING_COLOR, marker="o",
-                 linewidth=1.5, label="During Seizure")
-    axes[0].plot(x, group["Avg_MSC_Pre30"], color=PRE_COLOR, marker="o",
-                 linewidth=1.5, label="Pre-Seizure (30s)")
-    axes[0].set_title(f"Average Coherence | Animal: {animal}")
-    axes[0].set_ylabel("Avg MSC")
-    axes[0].set_ylim(0, 1.05)
-
-    axes[1].plot(x, group["Peak_Freq_Seizure"], color=DURING_COLOR, marker="o",
-                 linewidth=1.5, label="During Seizure")
-    axes[1].plot(x, group["Peak_Freq_Pre30"], color=PRE_COLOR, marker="o",
-                 linewidth=1.5, label="Pre-Seizure (30s)")
-    axes[1].set_title(f"Peak Coherence Frequency | Animal: {animal}")
-    axes[1].set_ylabel("Peak Freq (Hz)")
-
-    for ax in axes:
+    for ax, (band, sz_col, pre_col) in zip(axes, panels):
+        ax.plot(x, group[sz_col], color=DURING_COLOR, marker="o",
+                linewidth=1.5, label="During Seizure")
+        ax.plot(x, group[pre_col], color=PRE_COLOR, marker="o",
+                linewidth=1.5, label="Pre-Seizure (30s)")
+        ax.set_title(f"Average Coherence ({_band_label(band)}) | Animal: {animal}")
+        ax.set_ylabel("Avg MSC")
+        ax.set_ylim(0, 1.05)
         ax.set_xlabel("Date/Time")
         ax.legend(loc="upper left")
         _format_date_axis(ax)
@@ -430,31 +436,34 @@ def plot_coherence_animal_summary(group_df: pd.DataFrame):
     return fig
 
 
-def plot_coherence_global_summary(normalized_df: pd.DataFrame):
-    """Global coherence summary: all animals offset to Day 0, coloured by animal.
+def plot_coherence_global_summary(
+    normalized_df: pd.DataFrame,
+    band_low=(0.0, 14.0),
+    band_high=(14.0, 55.0),
+):
+    """Global band-averaged coherence: all animals offset to Day 0, by animal.
 
-    During-seizure values use filled markers, pre-seizure values use faded open
-    markers in the same per-animal colour.
+    Two stacked panels (low band, high band). Within each, during-seizure values
+    use filled markers and pre-seizure values use faded open markers in the same
+    per-animal colour.
     """
     colors = _animal_colors(normalized_df["Animal_ID"])
 
     fig, axes = plt.subplots(2, 1, figsize=(11, 9))
-    metrics = [
-        ("Avg_MSC_Seizure", "Avg_MSC_Pre30", "Global Average Coherence", "Avg MSC", (0, 1.05)),
-        ("Peak_Freq_Seizure", "Peak_Freq_Pre30", "Global Peak Coherence Frequency",
-         "Peak Freq (Hz)", None),
+    panels = [
+        (band_low, "Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
+        (band_high, "Avg_MSC_Seizure_High", "Avg_MSC_Pre_High"),
     ]
 
-    for ax, (sz_col, pre_col, title, ylabel, ylim) in zip(axes, metrics):
+    for ax, (band, sz_col, pre_col) in zip(axes, panels):
         for animal, group in normalized_df.groupby("Animal_ID"):
             ax.scatter(group["Normalized_DT"], group[sz_col], color=colors[animal],
                        s=42, alpha=0.85, label=f"{animal} (seiz)")
             ax.scatter(group["Normalized_DT"], group[pre_col], facecolors="none",
                        edgecolors=colors[animal], s=42, alpha=0.5, label=f"{animal} (pre)")
-        ax.set_title(title)
-        ax.set_ylabel(ylabel)
-        if ylim is not None:
-            ax.set_ylim(*ylim)
+        ax.set_title(f"Global Average Coherence ({_band_label(band)})")
+        ax.set_ylabel("Avg MSC")
+        ax.set_ylim(0, 1.05)
         _format_day_axis(ax)
 
     axes[0].legend(title="Animal", loc="center left", bbox_to_anchor=(1.0, 0.5), ncol=1)

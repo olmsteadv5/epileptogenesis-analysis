@@ -39,6 +39,22 @@ def compute_msc(
     return freqs, msc
 
 
+def _band_average(freqs: np.ndarray, msc: np.ndarray, band, include_low: bool) -> float:
+    """Mean MSC over a frequency band.
+
+    ``include_low`` controls the lower edge: ``True`` -> ``[lo, hi]`` (used for the
+    low band), ``False`` -> ``(lo, hi]`` (used for the high band) so the shared
+    boundary frequency is not counted in both bands. Returns NaN if the band is
+    empty.
+    """
+    lo, hi = band
+    if include_low:
+        mask = (freqs >= lo) & (freqs <= hi)
+    else:
+        mask = (freqs > lo) & (freqs <= hi)
+    return float(np.mean(msc[mask])) if np.any(mask) else float("nan")
+
+
 def compute_seizure_coherence(
     data1_full: np.ndarray,
     data2_full: np.ndarray,
@@ -50,13 +66,15 @@ def compute_seizure_coherence(
     window: int = 256,
     noverlap: int = 128,
     nfft: int = 1024,
+    band_low=(0.0, 14.0),
+    band_high=(14.0, 55.0),
 ) -> dict:
     """Compute during-seizure vs pre-seizure coherence for one seizure.
 
     Slices the two full-channel signals into the seizure window and the
     pre-seizure window (0-based, half-open sample indices), runs ``compute_msc``
-    on each, and returns a dict of summary scalars plus the raw freq/MSC arrays
-    needed for plotting.
+    on each, and returns band-limited average MSC (low and high bands, for both
+    seizure and pre-seizure) plus the raw freq/MSC arrays needed for plotting.
     """
     sz1 = data1_full[seizure_start_sample:seizure_end_sample]
     sz2 = data2_full[seizure_start_sample:seizure_end_sample]
@@ -67,10 +85,10 @@ def compute_seizure_coherence(
     freqs_pre, msc_pre = compute_msc(pre1, pre2, samp_freq, window, noverlap, nfft)
 
     return {
-        "avg_msc_seizure": float(np.mean(msc_seizure)),
-        "avg_msc_pre": float(np.mean(msc_pre)),
-        "peak_freq_seizure": float(freqs_seizure[np.argmax(msc_seizure)]),
-        "peak_freq_pre": float(freqs_pre[np.argmax(msc_pre)]),
+        "avg_msc_seizure_low": _band_average(freqs_seizure, msc_seizure, band_low, True),
+        "avg_msc_pre_low": _band_average(freqs_pre, msc_pre, band_low, True),
+        "avg_msc_seizure_high": _band_average(freqs_seizure, msc_seizure, band_high, False),
+        "avg_msc_pre_high": _band_average(freqs_pre, msc_pre, band_high, False),
         "freqs_seizure": freqs_seizure,
         "msc_seizure": msc_seizure,
         "freqs_pre": freqs_pre,

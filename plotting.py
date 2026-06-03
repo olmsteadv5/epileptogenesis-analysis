@@ -436,6 +436,44 @@ def plot_coherence_animal_summary(
     return fig
 
 
+def plot_coherence_ratio_animal_summary(
+    group_df: pd.DataFrame,
+    band_low=(0.0, 14.0),
+    band_high=(14.0, 55.0),
+):
+    """Per-animal seizure/pre-seizure MSC ratio over time, split by frequency band.
+
+    Two stacked panels (low band on top, high band below); each shows the ratio
+    of during-seizure to pre-seizure band-averaged MSC against recording time.
+    A dashed reference line at ratio=1 marks equal coherence (above => the
+    seizure is more coherent than its 30s baseline).
+    """
+    group = group_df.sort_values("File_Start_DT")
+    animal = group["Animal_ID"].iloc[0]
+    x = group["File_Start_DT"]
+
+    fig, axes = plt.subplots(2, 1, figsize=(9, 9))
+    panels = [
+        (band_low, "Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
+        (band_high, "Avg_MSC_Seizure_High", "Avg_MSC_Pre_High"),
+    ]
+
+    for ax, (band, sz_col, pre_col) in zip(axes, panels):
+        ratio = group[sz_col] / group[pre_col]
+        ax.plot(x, ratio, color=DURING_COLOR, marker="o", linewidth=1.5,
+                label="Seizure / Pre-Seizure")
+        ax.axhline(1.0, color="gray", linestyle="--", linewidth=1, label="Equal coherence")
+        ax.set_title(f"Coherence Ratio ({_band_label(band)}) | Animal: {animal}")
+        ax.set_ylabel("Seizure MSC / Pre-Seizure MSC")
+        ax.set_xlabel("Date/Time")
+        ax.legend(loc="upper left")
+        _format_date_axis(ax)
+
+    fig.suptitle(f"Longitudinal Coherence Ratio | Animal {animal}")
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    return fig
+
+
 def plot_coherence_global_summary(
     normalized_df: pd.DataFrame,
     band_low=(0.0, 14.0),
@@ -470,5 +508,42 @@ def plot_coherence_global_summary(
     axes[1].set_xlabel("Experimental Days (Starting from Day 0)")
 
     fig.suptitle("Population Coherence: Offset to Experimental Day 0")
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    return fig
+
+
+def plot_coherence_ratio_global_summary(
+    normalized_df: pd.DataFrame,
+    band_low=(0.0, 14.0),
+    band_high=(14.0, 55.0),
+):
+    """Global seizure/pre-seizure MSC ratio: all animals offset to Day 0, by animal.
+
+    Two stacked panels (low band, high band). Each animal's seizure-to-pre ratio
+    is scattered against experimental day in its own colour, with a dashed
+    reference line at ratio=1 (above => seizure more coherent than its baseline).
+    """
+    colors = _animal_colors(normalized_df["Animal_ID"])
+
+    fig, axes = plt.subplots(2, 1, figsize=(11, 9))
+    panels = [
+        (band_low, "Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
+        (band_high, "Avg_MSC_Seizure_High", "Avg_MSC_Pre_High"),
+    ]
+
+    for ax, (band, sz_col, pre_col) in zip(axes, panels):
+        for animal, group in normalized_df.groupby("Animal_ID"):
+            ratio = group[sz_col] / group[pre_col]
+            ax.scatter(group["Normalized_DT"], ratio, color=colors[animal],
+                       s=42, alpha=0.85, label=f"{animal}")
+        ax.axhline(1.0, color="gray", linestyle="--", linewidth=1)
+        ax.set_title(f"Global Coherence Ratio ({_band_label(band)})")
+        ax.set_ylabel("Seizure MSC / Pre-Seizure MSC")
+        _format_day_axis(ax)
+
+    axes[0].legend(title="Animal", loc="center left", bbox_to_anchor=(1.0, 0.5), ncol=1)
+    axes[1].set_xlabel("Experimental Days (Starting from Day 0)")
+
+    fig.suptitle("Population Coherence Ratio: Offset to Experimental Day 0")
     fig.tight_layout(rect=(0, 0, 1, 0.98))
     return fig

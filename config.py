@@ -66,3 +66,5 @@ NUM_MINS_PER_SUBPLOT = 10      # Minutes shown per overview subplot
 OVERVIEW_NUM_SUBPLOTS = 6      # Subplots per overview figure (-> 60 min total)
 SEGMENT_SECS = 10.0            # Seconds per zoomed overlap segment
 COLORMAP = "viridis"           # Matplotlib colormap for Racine-coded scatter points
+RACINE_SCALE_MAX = 7           # Racine severity scale upper bound
+DAY_ZERO = (2000, 1, 1)        # Shared epoch (Y, M, D) for Day-0 normalized timelines

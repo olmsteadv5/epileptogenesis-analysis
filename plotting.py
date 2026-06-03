@@ -40,11 +40,14 @@ THRESHOLD_COLOR = "blue"   # Correlation threshold lines
 MEAN_COLOR = "red"         # Mean reference lines
 PRE_COLOR = "blue"         # Pre-seizure series
 DURING_COLOR = "red"       # During-seizure series
-RACINE_CMAP = "viridis"    # Colormap for Racine-coded scatter
-RACINE_CLIM = (1, 7)       # Colorbar limits for the Racine scale
-ANIMAL_CMAP = "tab10"      # Qualitative colormap for per-animal series
+# Defaults below mirror config.py; the notebook threads the config values in as
+# args (keeping this module config-free, like the analysis modules).
+RACINE_CMAP = "viridis"      # Default colormap for Racine-coded scatter
+RACINE_SCALE_MAX = 7         # Default Racine severity scale upper bound
+ANIMAL_CMAP = "tab10"        # Qualitative colormap for per-animal series
 
-_DAY_ZERO = datetime(2000, 1, 1)
+# (year, month, day) -- must match config.DAY_ZERO / offset_to_day_zero's epoch.
+_DEFAULT_DAY_ZERO = (2000, 1, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -58,11 +61,16 @@ def _format_date_axis(ax) -> None:
         label.set_horizontalalignment("right")
 
 
-def _format_day_axis(ax) -> None:
-    """Label an axis of normalized datetimes as 'Day N' from the Day-0 epoch."""
+def _format_day_axis(ax, day_zero: tuple[int, int, int] = _DEFAULT_DAY_ZERO) -> None:
+    """Label an axis of normalized datetimes as 'Day N' from the Day-0 epoch.
+
+    ``day_zero`` is a ``(year, month, day)`` tuple and must match the epoch used
+    by ``offset_to_day_zero`` when the ``Normalized_DT`` values were built.
+    """
+    epoch = datetime(*day_zero)
 
     def _fmt(x, _pos):
-        days = (mdates.num2date(x).replace(tzinfo=None) - _DAY_ZERO).days
+        days = (mdates.num2date(x).replace(tzinfo=None) - epoch).days
         return f"Day {days}"
 
     ax.xaxis.set_major_formatter(plt.FuncFormatter(_fmt))
@@ -270,11 +278,13 @@ def plot_coherence(
     freqs_sz,
     msc_sz,
     samp_freq: float,
+    pre_seizure_secs: float = 30,
     title: str | None = None,
 ):
     """Pre-seizure vs during-seizure MSC across frequency for one seizure."""
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.plot(freqs_pre, msc_pre, color=PRE_COLOR, linewidth=1.5, label="Pre-Seizure (30s)")
+    ax.plot(freqs_pre, msc_pre, color=PRE_COLOR, linewidth=1.5,
+            label=f"Pre-Seizure ({pre_seizure_secs:g}s)")
     ax.plot(freqs_sz, msc_sz, color=DURING_COLOR, linewidth=1.5, label="During Seizure")
     ax.set_xlim(0, samp_freq / 2)
     ax.set_ylim(0, 1.05)
@@ -290,11 +300,11 @@ def plot_coherence(
 # ---------------------------------------------------------------------------
 # Correlation summaries
 # ---------------------------------------------------------------------------
-def _trend_scatter(ax, x, y, racine, title, ylabel):
+def _trend_scatter(ax, x, y, racine, title, ylabel, cmap=RACINE_CMAP, racine_max=RACINE_SCALE_MAX):
     """Shared trend-line + Racine-coloured scatter + mean line panel."""
     ax.plot(x, y, color="gray", linewidth=1.5, alpha=0.4, label="Trend")
     sc = ax.scatter(
-        x, y, c=racine, cmap=RACINE_CMAP, vmin=RACINE_CLIM[0], vmax=RACINE_CLIM[1],
+        x, y, c=racine, cmap=cmap, vmin=1, vmax=racine_max,
         s=49, zorder=3,
     )
     mean_val = float(np.mean(y))
@@ -308,7 +318,12 @@ def _trend_scatter(ax, x, y, racine, title, ylabel):
     return sc
 
 
-def plot_animal_summary(group_df: pd.DataFrame, corr_threshold: float):
+def plot_animal_summary(
+    group_df: pd.DataFrame,
+    corr_threshold: float,
+    cmap: str = RACINE_CMAP,
+    racine_max: int = RACINE_SCALE_MAX,
+):
     """Per-animal longitudinal correlation summary (4 stacked panels).
 
     Panels: seizure duration, seconds above threshold, average correlation
@@ -326,15 +341,18 @@ def plot_animal_summary(group_df: pd.DataFrame, corr_threshold: float):
     sc = _trend_scatter(
         axes[0], x, group["Seizure_Duration_Sec"], racine,
         f"Seizure Duration | Animal: {animal} (Ch {ch1}, {ch2})", "Duration (Seconds)",
+        cmap=cmap, racine_max=racine_max,
     )
     _trend_scatter(
         axes[1], x, group["Seconds_Above_Threshold"], racine,
         f"Time Above Threshold | Animal: {animal} (Ch {ch1}, {ch2})",
         f"Seconds Above ({corr_threshold})",
+        cmap=cmap, racine_max=racine_max,
     )
     _trend_scatter(
         axes[2], x, group["Avg_Corr_Strength"], racine,
         f"Correlation Strength | Animal: {animal} (Ch {ch1}, {ch2})", "Avg |Correlation|",
+        cmap=cmap, racine_max=racine_max,
     )
     axes[2].set_ylim(0, 1.05)
 
@@ -343,8 +361,8 @@ def plot_animal_summary(group_df: pd.DataFrame, corr_threshold: float):
     axes[3].scatter(x, racine, color="black", s=49, zorder=3)
     axes[3].set_title(f"Seizure Severity | Animal: {animal} (Ch {ch1}, {ch2})")
     axes[3].set_ylabel("Racine Scale")
-    axes[3].set_ylim(0, 8)
-    axes[3].set_yticks(range(0, 8))
+    axes[3].set_ylim(0, racine_max + 1)
+    axes[3].set_yticks(range(0, racine_max + 1))
 
     for ax in axes:
         ax.set_xlabel("Date/Time")
@@ -355,7 +373,11 @@ def plot_animal_summary(group_df: pd.DataFrame, corr_threshold: float):
     return fig
 
 
-def plot_global_summary(normalized_df: pd.DataFrame):
+def plot_global_summary(
+    normalized_df: pd.DataFrame,
+    racine_max: int = RACINE_SCALE_MAX,
+    day_zero: tuple[int, int, int] = _DEFAULT_DAY_ZERO,
+):
     """Global correlation summary: all animals offset to Day 0, coloured by animal."""
     colors = _animal_colors(normalized_df["Animal_ID"])
     x_all = normalized_df["Normalized_DT"]
@@ -365,7 +387,7 @@ def plot_global_summary(normalized_df: pd.DataFrame):
         ("Seizure_Duration_Sec", "Global Duration (Normalized Start)", "Seconds", None),
         ("Seconds_Above_Threshold", "Global Time Above Threshold", "Seconds", None),
         ("Avg_Corr_Strength", "Global Correlation Strength", "Avg |Corr|", (0, 1.05)),
-        ("Racine_Scale", "Global Seizure Severity", "Racine", (0, 8)),
+        ("Racine_Scale", "Global Seizure Severity", "Racine", (0, racine_max + 1)),
     ]
 
     for ax, (col, title, ylabel, ylim) in zip(axes, panels):
@@ -379,9 +401,9 @@ def plot_global_summary(normalized_df: pd.DataFrame):
         ax.set_ylabel(ylabel)
         if ylim is not None:
             ax.set_ylim(*ylim)
-        _format_day_axis(ax)
+        _format_day_axis(ax, day_zero)
 
-    axes[3].set_yticks(range(0, 8))
+    axes[3].set_yticks(range(0, racine_max + 1))
     axes[0].legend(title="Animal", loc="center left", bbox_to_anchor=(1.0, 0.5))
     axes[3].set_xlabel("Experimental Days (Starting from Day 0)")
 
@@ -403,6 +425,7 @@ def plot_coherence_animal_summary(
     group_df: pd.DataFrame,
     band_low=(0.0, 14.0),
     band_high=(14.0, 55.0),
+    pre_seizure_secs: float = 30,
 ):
     """Per-animal average-coherence trends over time, split by frequency band.
 
@@ -423,7 +446,7 @@ def plot_coherence_animal_summary(
         ax.plot(x, group[sz_col], color=DURING_COLOR, marker="o",
                 linewidth=1.5, label="During Seizure")
         ax.plot(x, group[pre_col], color=PRE_COLOR, marker="o",
-                linewidth=1.5, label="Pre-Seizure (30s)")
+                linewidth=1.5, label=f"Pre-Seizure ({pre_seizure_secs:g}s)")
         ax.set_title(f"Average Coherence ({_band_label(band)}) | Animal: {animal}")
         ax.set_ylabel("Avg MSC")
         ax.set_ylim(0, 1.05)
@@ -478,6 +501,7 @@ def plot_coherence_global_summary(
     normalized_df: pd.DataFrame,
     band_low=(0.0, 14.0),
     band_high=(14.0, 55.0),
+    day_zero: tuple[int, int, int] = _DEFAULT_DAY_ZERO,
 ):
     """Global band-averaged coherence: all animals offset to Day 0, by animal.
 
@@ -502,7 +526,7 @@ def plot_coherence_global_summary(
         ax.set_title(f"Global Average Coherence ({_band_label(band)})")
         ax.set_ylabel("Avg MSC")
         ax.set_ylim(0, 1.05)
-        _format_day_axis(ax)
+        _format_day_axis(ax, day_zero)
 
     axes[0].legend(title="Animal", loc="center left", bbox_to_anchor=(1.0, 0.5), ncol=1)
     axes[1].set_xlabel("Experimental Days (Starting from Day 0)")
@@ -516,6 +540,7 @@ def plot_coherence_ratio_global_summary(
     normalized_df: pd.DataFrame,
     band_low=(0.0, 14.0),
     band_high=(14.0, 55.0),
+    day_zero: tuple[int, int, int] = _DEFAULT_DAY_ZERO,
 ):
     """Global seizure/pre-seizure MSC ratio: all animals offset to Day 0, by animal.
 
@@ -539,7 +564,7 @@ def plot_coherence_ratio_global_summary(
         ax.axhline(1.0, color="gray", linestyle="--", linewidth=1)
         ax.set_title(f"Global Coherence Ratio ({_band_label(band)})")
         ax.set_ylabel("Seizure MSC / Pre-Seizure MSC")
-        _format_day_axis(ax)
+        _format_day_axis(ax, day_zero)
 
     axes[0].legend(title="Animal", loc="center left", bbox_to_anchor=(1.0, 0.5), ncol=1)
     axes[1].set_xlabel("Experimental Days (Starting from Day 0)")

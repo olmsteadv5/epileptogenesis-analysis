@@ -16,8 +16,10 @@ import pandas as pd
 
 from obe_io import read_data
 
-# Dummy "Day 0" all animals are offset onto for the global summaries.
-_DAY_ZERO = pd.Timestamp(2000, 1, 1)
+# Default "Day 0" epoch all animals are offset onto for the global summaries.
+# Callers (the notebook) pass config.DAY_ZERO so the normalization here agrees
+# with the day-axis formatter in plotting.py.
+_DEFAULT_DAY_ZERO = (2000, 1, 1)
 
 
 def channel_indices(
@@ -80,21 +82,25 @@ def offset_to_day_zero(
     df: pd.DataFrame,
     time_col: str = "File_Start_DT",
     animal_col: str = "Animal_ID",
+    day_zero: tuple[int, int, int] = _DEFAULT_DAY_ZERO,
 ) -> pd.DataFrame:
     """Return a copy of ``df`` with a ``Normalized_DT`` column offset to Day 0.
 
-    Each animal's earliest calendar day is mapped onto 2000-01-01 while the time
-    of day and the day-to-day spacing are preserved, so animals recorded on
-    different real dates can be overlaid on a common experimental timeline.
+    Each animal's earliest calendar day is mapped onto ``day_zero`` (a
+    ``(year, month, day)`` tuple) while the time of day and the day-to-day
+    spacing are preserved, so animals recorded on different real dates can be
+    overlaid on a common experimental timeline. ``day_zero`` must match the
+    epoch used by the day-axis formatter in ``plotting.py``.
     """
     out = df.copy()
+    day_zero_ts = pd.Timestamp(*day_zero)
     normalized = pd.Series(pd.NaT, index=out.index, dtype="datetime64[ns]")
 
     for _, group in out.groupby(animal_col):
         first_date = group[time_col].min().normalize()
         day_offset = group[time_col].dt.normalize() - first_date
         time_of_day = group[time_col] - group[time_col].dt.normalize()
-        normalized.loc[group.index] = _DAY_ZERO + day_offset + time_of_day
+        normalized.loc[group.index] = day_zero_ts + day_offset + time_of_day
 
     out["Normalized_DT"] = normalized
     return out.sort_values("Normalized_DT").reset_index(drop=True)

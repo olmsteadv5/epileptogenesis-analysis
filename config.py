@@ -1,10 +1,3 @@
-"""Central configuration for the EEG seizure correlation/coherence pipeline.
-
-All tunable parameters live here as plain module-level constants (no classes /
-dataclasses). Functions in the other modules receive these values as explicit
-arguments rather than importing this module directly, which keeps them testable.
-"""
-
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------

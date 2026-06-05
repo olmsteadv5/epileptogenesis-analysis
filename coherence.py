@@ -14,9 +14,11 @@ def compute_msc(
     noverlap: int = 128,
     nfft: int = 1024,
 ) -> tuple[np.ndarray, np.ndarray]:
+
     #Magnitude squared coherence between ``x`` and ``y``.
     #Symmertic Hann window
     win = hann(window, sym=True)
+
     #scipy handles Welch averaging and edge cases internally
     freqs, msc = coherence(
         x,
@@ -30,10 +32,10 @@ def compute_msc(
 
 
 def _band_average(freqs: np.ndarray, msc: np.ndarray, band, include_low: bool) -> float:
-    #Mean MSC over a frequency band
+    # Mean MSC over a frequency band
     lo, hi = band
 
-    #make sure the boundry frequency isn't double used
+    # Make sure the boundry frequency isn't double used
     if include_low:
         mask = (freqs >= lo) & (freqs <= hi)
     else:

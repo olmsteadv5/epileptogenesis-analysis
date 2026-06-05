@@ -3,12 +3,21 @@
 Every function returns a Matplotlib ``Figure`` (or draws onto supplied axes) and
 performs no I/O; saving and displaying are the caller's job. A shared style block
 at the top keeps fonts, sizes, and colours consistent across every figure.
+
+The longitudinal *summary* plots (per-animal and global) are all the same figure
+skeleton -- a vertical stack of time-series panels with a shared x-axis, suptitle
+and layout. That skeleton lives once in ``longitudinal_animal_figure`` /
+``longitudinal_global_figure``; each summary only supplies a list of ``Panel``
+specs describing what to draw in each panel. Adding a new metric is one ``Panel``,
+not a new bespoke function.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Callable
 
 import matplotlib.dates as mdates
 import numpy as np
@@ -97,6 +106,24 @@ def _bins_to_size(bins):
 def _size_to_bins(sizes):
     """Inverse of ``_bins_to_size`` -- used to label the marker-size legend."""
     return (np.asarray(sizes) - _BIN_SIZE_BASE) / _BIN_SIZE_SCALE
+
+
+def _band_label(band) -> str:
+    """Human-readable band label, e.g. (0.0, 14.0) -> '0-14 Hz'."""
+    lo, hi = band
+    return f"{lo:g}-{hi:g} Hz"
+
+
+def _bin_size_legend(ax, sc, loc):
+    """Attach a marker-size legend (coherent bins used) and return the artist."""
+    handles, labels = sc.legend_elements(
+        prop="sizes", num=4, alpha=0.6, color="gray",
+        func=_size_to_bins, fmt="{x:.0f}",
+    )
+    leg = ax.legend(handles, labels, title="Bins used", loc=loc,
+                    labelspacing=1.3, borderpad=0.8, framealpha=0.9)
+    ax.add_artist(leg)
+    return leg
 
 
 # ---------------------------------------------------------------------------
@@ -314,26 +341,238 @@ def plot_coherence(
 
 
 # ---------------------------------------------------------------------------
+# Longitudinal summary framework
+# ---------------------------------------------------------------------------
+# Every per-animal / global summary is the same figure: a vertical stack of
+# time-series panels sharing an x-axis (recording datetime for per-animal views,
+# Day-0-normalized datetime for global views) plus a suptitle and shared layout.
+# A ``Panel`` describes one row -- its title, y-label, optional y-limits/ticks,
+# the ``draw`` callable that actually plots it, and an optional ``after`` hook
+# for extra per-panel decoration (e.g. a marker-size legend). ``draw`` may return
+# a "mappable" (a scatter) which the builder turns into one shared colorbar.
+@dataclass
+class Panel:
+    title: str
+    ylabel: str
+    draw: Callable                 # animal: (ax, x, group_df) -> mappable | None
+                                   # global: (ax, normalized_df, colors) -> mappable | None
+    ylim: tuple | None = None
+    yticks: range | None = None
+    after: Callable | None = None  # (ax, mappable) -> None
+
+
+def _decorate(ax, panel: Panel) -> None:
+    ax.set_title(panel.title)
+    ax.set_ylabel(panel.ylabel)
+    if panel.ylim is not None:
+        ax.set_ylim(*panel.ylim)
+    if panel.yticks is not None:
+        ax.set_yticks(panel.yticks)
+
+
+def _as_list(axes, n):
+    """Normalize ``plt.subplots`` return to a list (it's a bare Axes when n==1)."""
+    return [axes] if n == 1 else list(axes)
+
+
+def longitudinal_animal_figure(
+    group_df: pd.DataFrame,
+    panels: list[Panel],
+    *,
+    suptitle: str,
+    figsize: tuple[float, float] | None = None,
+    sharex: bool = False,
+    colorbar_label: str | None = None,
+):
+    """Build a per-animal summary: panels stacked against recording datetime.
+
+    Rows are sorted by ``File_Start_DT`` and that column is the shared x-axis.
+    When ``colorbar_label`` is given the figure uses constrained layout and adds
+    one colorbar from the last scatter a panel returned.
+    """
+    group = group_df.sort_values("File_Start_DT")
+    x = group["File_Start_DT"]
+    constrained = colorbar_label is not None
+
+    fig, raw_axes = plt.subplots(
+        len(panels), 1, figsize=figsize or (9, 4 * len(panels)),
+        sharex=sharex, layout="constrained" if constrained else None,
+    )
+    axes = _as_list(raw_axes, len(panels))
+
+    mappable = None
+    for ax, panel in zip(axes, panels):
+        m = panel.draw(ax, x, group)
+        mappable = m if m is not None else mappable
+        _decorate(ax, panel)
+        _format_date_axis(ax)
+        if panel.after is not None:
+            panel.after(ax, m)
+
+    axes[-1].set_xlabel("Date/Time")
+    if colorbar_label and mappable is not None:
+        fig.colorbar(mappable, ax=axes, fraction=0.046, pad=0.02).set_label(colorbar_label)
+
+    fig.suptitle(suptitle)
+    if not constrained:
+        fig.tight_layout(rect=(0, 0, 1, 0.98))
+    return fig
+
+
+def longitudinal_global_figure(
+    normalized_df: pd.DataFrame,
+    panels: list[Panel],
+    *,
+    day_zero: tuple[int, int, int],
+    suptitle: str,
+    figsize: tuple[float, float] | None = None,
+    colorbar_label: str | None = None,
+):
+    """Build a global summary: panels stacked against Day-0-normalized datetime.
+
+    A stable per-animal colour map is passed to every panel's ``draw`` so each
+    can colour its own series; the x-axis is labelled in experimental days.
+    """
+    colors = _animal_colors(normalized_df["Animal_ID"])
+    constrained = colorbar_label is not None
+
+    fig, raw_axes = plt.subplots(
+        len(panels), 1, figsize=figsize or (11, 4 * len(panels)),
+        layout="constrained" if constrained else None,
+    )
+    axes = _as_list(raw_axes, len(panels))
+
+    mappable = None
+    for ax, panel in zip(axes, panels):
+        m = panel.draw(ax, normalized_df, colors)
+        mappable = m if m is not None else mappable
+        _decorate(ax, panel)
+        _format_day_axis(ax, day_zero)
+        if panel.after is not None:
+            panel.after(ax, m)
+
+    axes[-1].set_xlabel("Experimental Days (Starting from Day 0)")
+    if colorbar_label and mappable is not None:
+        fig.colorbar(mappable, ax=axes, fraction=0.046, pad=0.02).set_label(colorbar_label)
+
+    fig.suptitle(suptitle)
+    if not constrained:
+        fig.tight_layout(rect=(0, 0, 1, 0.98))
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Per-panel drawing strategies
+# ---------------------------------------------------------------------------
+# Each factory returns a ``draw`` callable matching the signature its builder
+# expects (per-animal: (ax, x, group); global: (ax, df, colors)).
+def _draw_trend_racine(col, cmap, racine_max):
+    """Trend line + Racine-coloured scatter + mean line (per-animal)."""
+    def draw(ax, x, g):
+        y = g[col]
+        ax.plot(x, y, color="gray", linewidth=1.5, alpha=0.4, label="Trend")
+        sc = ax.scatter(x, y, c=g["Racine_Scale"], cmap=cmap, vmin=1,
+                        vmax=racine_max, s=49, zorder=3)
+        mean_val = float(np.mean(y))
+        ax.axhline(mean_val, color=MEAN_COLOR, linestyle="--", linewidth=2,
+                   label=f"Mean: {round(mean_val, 3)}")
+        ax.legend(loc="upper left")
+        return sc
+    return draw
+
+
+def _draw_racine_progression():
+    """Plain Racine-severity line + black markers (per-animal)."""
+    def draw(ax, x, g):
+        r = g["Racine_Scale"]
+        ax.plot(x, r, color="gray", linewidth=1.5, alpha=0.5)
+        ax.scatter(x, r, color="black", s=49, zorder=3)
+        return None
+    return draw
+
+
+def _draw_seizure_vs_pre(sz_col, pre_col, pre_secs):
+    """During-seizure vs pre-seizure line markers (per-animal)."""
+    def draw(ax, x, g):
+        ax.plot(x, g[sz_col], color=DURING_COLOR, marker="o", linewidth=1.5,
+                label="During Seizure")
+        ax.plot(x, g[pre_col], color=PRE_COLOR, marker="o", linewidth=1.5,
+                label=f"Pre-Seizure ({pre_secs:g}s)")
+        ax.legend(loc="upper left")
+        return None
+    return draw
+
+
+def _draw_ratio(sz_col, pre_col):
+    """Seizure/pre-seizure ratio line + reference line at 1 (per-animal)."""
+    def draw(ax, x, g):
+        ratio = g[sz_col] / g[pre_col]
+        ax.plot(x, ratio, color=DURING_COLOR, marker="o", linewidth=1.5,
+                label="Seizure / Pre-Seizure")
+        ax.axhline(1.0, color="gray", linestyle="--", linewidth=1, label="Equal coherence")
+        ax.legend(loc="upper left")
+        return None
+    return draw
+
+
+def _draw_confidence(tau_col, r2_col, nbin_col, cmap):
+    """R^2-coloured, bin-sized time-delay scatter + zero line (per-animal)."""
+    def draw(ax, x, g):
+        sc = ax.scatter(
+            x, g[tau_col], c=g[r2_col], cmap=cmap, vmin=0.0, vmax=1.0,
+            s=_bins_to_size(g[nbin_col]), alpha=0.9, edgecolors="black",
+            linewidths=0.4, zorder=3,
+        )
+        ax.axhline(0.0, color="gray", linestyle="--", linewidth=1)
+        return sc
+    return draw
+
+
+def _gdraw_animal_scatter(col):
+    """Faint all-points trend line + per-animal coloured scatter (global)."""
+    def draw(ax, df, colors):
+        ax.plot(df["Normalized_DT"], df[col], color="gray", linewidth=1.0, alpha=0.2)
+        for animal, group in df.groupby("Animal_ID"):
+            ax.scatter(group["Normalized_DT"], group[col], color=colors[animal],
+                       s=36, alpha=0.7, label=str(animal))
+        return None
+    return draw
+
+
+def _gdraw_seizure_pre(sz_col, pre_col):
+    """Per-animal seizure (filled) vs pre-seizure (open) scatter (global)."""
+    def draw(ax, df, colors):
+        for animal, group in df.groupby("Animal_ID"):
+            ax.scatter(group["Normalized_DT"], group[sz_col], color=colors[animal],
+                       s=42, alpha=0.85, label=f"{animal} (seiz)")
+            ax.scatter(group["Normalized_DT"], group[pre_col], facecolors="none",
+                       edgecolors=colors[animal], s=42, alpha=0.5, label=f"{animal} (pre)")
+        return None
+    return draw
+
+
+def _gdraw_ratio(sz_col, pre_col):
+    """Per-animal seizure/pre ratio scatter + reference line at 1 (global)."""
+    def draw(ax, df, colors):
+        for animal, group in df.groupby("Animal_ID"):
+            ratio = group[sz_col] / group[pre_col]
+            ax.scatter(group["Normalized_DT"], ratio, color=colors[animal],
+                       s=42, alpha=0.85, label=f"{animal}")
+        ax.axhline(1.0, color="gray", linestyle="--", linewidth=1)
+        return None
+    return draw
+
+
+def _animal_legend(loc="center left", bbox=(1.0, 0.5), **kw):
+    """An ``after`` hook adding the per-animal legend to a (first) panel."""
+    def after(ax, _mappable):
+        ax.legend(title="Animal", loc=loc, bbox_to_anchor=bbox, **kw)
+    return after
+
+
+# ---------------------------------------------------------------------------
 # Correlation summaries
 # ---------------------------------------------------------------------------
-def _trend_scatter(ax, x, y, racine, title, ylabel, cmap=RACINE_CMAP, racine_max=RACINE_SCALE_MAX):
-    """Shared trend-line + Racine-coloured scatter + mean line panel."""
-    ax.plot(x, y, color="gray", linewidth=1.5, alpha=0.4, label="Trend")
-    sc = ax.scatter(
-        x, y, c=racine, cmap=cmap, vmin=1, vmax=racine_max,
-        s=49, zorder=3,
-    )
-    mean_val = float(np.mean(y))
-    ax.axhline(
-        mean_val, color=MEAN_COLOR, linestyle="--", linewidth=2,
-        label=f"Mean: {round(mean_val, 3)}",
-    )
-    ax.set_title(title)
-    ax.set_ylabel(ylabel)
-    ax.legend(loc="upper left")
-    return sc
-
-
 def plot_animal_summary(
     group_df: pd.DataFrame,
     corr_threshold: float,
@@ -345,48 +584,25 @@ def plot_animal_summary(
     Panels: seizure duration, seconds above threshold, average correlation
     strength, and Racine severity, plotted against recording time.
     """
-    group = group_df.sort_values("File_Start_DT")
-    animal = group["Animal_ID"].iloc[0]
-    ch1 = group["Ch1"].iloc[0]
-    ch2 = group["Ch2"].iloc[0]
-    x = group["File_Start_DT"]
-    racine = group["Racine_Scale"]
+    animal = group_df["Animal_ID"].iloc[0]
+    ch1, ch2 = group_df["Ch1"].iloc[0], group_df["Ch2"].iloc[0]
+    tag = f"Animal: {animal} (Ch {ch1}, {ch2})"
 
-    fig, axes = plt.subplots(4, 1, figsize=(9, 16))
-
-    sc = _trend_scatter(
-        axes[0], x, group["Seizure_Duration_Sec"], racine,
-        f"Seizure Duration | Animal: {animal} (Ch {ch1}, {ch2})", "Duration (Seconds)",
-        cmap=cmap, racine_max=racine_max,
+    panels = [
+        Panel(f"Seizure Duration | {tag}", "Duration (Seconds)",
+              _draw_trend_racine("Seizure_Duration_Sec", cmap, racine_max)),
+        Panel(f"Time Above Threshold | {tag}", f"Seconds Above ({corr_threshold})",
+              _draw_trend_racine("Seconds_Above_Threshold", cmap, racine_max)),
+        Panel(f"Correlation Strength | {tag}", "Avg |Correlation|",
+              _draw_trend_racine("Avg_Corr_Strength", cmap, racine_max), ylim=(0, 1.05)),
+        Panel(f"Seizure Severity | {tag}", "Racine Scale",
+              _draw_racine_progression(), ylim=(0, racine_max + 1),
+              yticks=range(0, racine_max + 1)),
+    ]
+    return longitudinal_animal_figure(
+        group_df, panels, figsize=(9, 16), colorbar_label="Racine",
+        suptitle=f"Longitudinal Analysis | Animal {animal}",
     )
-    _trend_scatter(
-        axes[1], x, group["Seconds_Above_Threshold"], racine,
-        f"Time Above Threshold | Animal: {animal} (Ch {ch1}, {ch2})",
-        f"Seconds Above ({corr_threshold})",
-        cmap=cmap, racine_max=racine_max,
-    )
-    _trend_scatter(
-        axes[2], x, group["Avg_Corr_Strength"], racine,
-        f"Correlation Strength | Animal: {animal} (Ch {ch1}, {ch2})", "Avg |Correlation|",
-        cmap=cmap, racine_max=racine_max,
-    )
-    axes[2].set_ylim(0, 1.05)
-
-    # Racine progression (no colour coding -- it is the colour axis elsewhere).
-    axes[3].plot(x, racine, color="gray", linewidth=1.5, alpha=0.5)
-    axes[3].scatter(x, racine, color="black", s=49, zorder=3)
-    axes[3].set_title(f"Seizure Severity | Animal: {animal} (Ch {ch1}, {ch2})")
-    axes[3].set_ylabel("Racine Scale")
-    axes[3].set_ylim(0, racine_max + 1)
-    axes[3].set_yticks(range(0, racine_max + 1))
-
-    for ax in axes:
-        ax.set_xlabel("Date/Time")
-        _format_date_axis(ax)
-
-    fig.colorbar(sc, ax=axes.tolist(), label="Racine", fraction=0.025, pad=0.02)
-    fig.suptitle(f"Longitudinal Analysis | Animal {animal}")
-    return fig
 
 
 def plot_global_summary(
@@ -395,48 +611,26 @@ def plot_global_summary(
     day_zero: tuple[int, int, int] = _DEFAULT_DAY_ZERO,
 ):
     """Global correlation summary: all animals offset to Day 0, coloured by animal."""
-    colors = _animal_colors(normalized_df["Animal_ID"])
-    x_all = normalized_df["Normalized_DT"]
-
-    fig, axes = plt.subplots(4, 1, figsize=(11, 16))
     panels = [
-        ("Seizure_Duration_Sec", "Global Duration (Normalized Start)", "Seconds", None),
-        ("Seconds_Above_Threshold", "Global Time Above Threshold", "Seconds", None),
-        ("Avg_Corr_Strength", "Global Correlation Strength", "Avg |Corr|", (0, 1.05)),
-        ("Racine_Scale", "Global Seizure Severity", "Racine", (0, racine_max + 1)),
+        Panel("Global Duration (Normalized Start)", "Seconds",
+              _gdraw_animal_scatter("Seizure_Duration_Sec"), after=_animal_legend()),
+        Panel("Global Time Above Threshold", "Seconds",
+              _gdraw_animal_scatter("Seconds_Above_Threshold")),
+        Panel("Global Correlation Strength", "Avg |Corr|",
+              _gdraw_animal_scatter("Avg_Corr_Strength"), ylim=(0, 1.05)),
+        Panel("Global Seizure Severity", "Racine",
+              _gdraw_animal_scatter("Racine_Scale"), ylim=(0, racine_max + 1),
+              yticks=range(0, racine_max + 1)),
     ]
-
-    for ax, (col, title, ylabel, ylim) in zip(axes, panels):
-        ax.plot(x_all, normalized_df[col], color="gray", linewidth=1.0, alpha=0.2)
-        for animal, group in normalized_df.groupby("Animal_ID"):
-            ax.scatter(
-                group["Normalized_DT"], group[col],
-                color=colors[animal], s=36, alpha=0.7, label=str(animal),
-            )
-        ax.set_title(title)
-        ax.set_ylabel(ylabel)
-        if ylim is not None:
-            ax.set_ylim(*ylim)
-        _format_day_axis(ax, day_zero)
-
-    axes[3].set_yticks(range(0, racine_max + 1))
-    axes[0].legend(title="Animal", loc="center left", bbox_to_anchor=(1.0, 0.5))
-    axes[3].set_xlabel("Experimental Days (Starting from Day 0)")
-
-    fig.suptitle("Population Analysis: Offset to Experimental Day 0")
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
-    return fig
+    return longitudinal_global_figure(
+        normalized_df, panels, day_zero=day_zero, figsize=(11, 16),
+        suptitle="Population Analysis: Offset to Experimental Day 0",
+    )
 
 
 # ---------------------------------------------------------------------------
 # Coherence summaries (mirror the correlation summaries)
 # ---------------------------------------------------------------------------
-def _band_label(band) -> str:
-    """Human-readable band label, e.g. (0.0, 14.0) -> '0-14 Hz'."""
-    lo, hi = band
-    return f"{lo:g}-{hi:g} Hz"
-
-
 def plot_coherence_animal_summary(
     group_df: pd.DataFrame,
     band_low=(0.0, 14.0),
@@ -448,31 +642,19 @@ def plot_coherence_animal_summary(
     Two stacked panels (low band on top, high band below); each shows the
     during-seizure vs pre-seizure band-averaged MSC against recording time.
     """
-    group = group_df.sort_values("File_Start_DT")
-    animal = group["Animal_ID"].iloc[0]
-    x = group["File_Start_DT"]
-
-    fig, axes = plt.subplots(2, 1, figsize=(9, 9))
+    animal = group_df["Animal_ID"].iloc[0]
     panels = [
-        (band_low, "Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
-        (band_high, "Avg_MSC_Seizure_High", "Avg_MSC_Pre_High"),
+        Panel(f"Average Coherence ({_band_label(band_low)}) | Animal: {animal}", "Avg MSC",
+              _draw_seizure_vs_pre("Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low", pre_seizure_secs),
+              ylim=(0, 1.05)),
+        Panel(f"Average Coherence ({_band_label(band_high)}) | Animal: {animal}", "Avg MSC",
+              _draw_seizure_vs_pre("Avg_MSC_Seizure_High", "Avg_MSC_Pre_High", pre_seizure_secs),
+              ylim=(0, 1.05)),
     ]
-
-    for ax, (band, sz_col, pre_col) in zip(axes, panels):
-        ax.plot(x, group[sz_col], color=DURING_COLOR, marker="o",
-                linewidth=1.5, label="During Seizure")
-        ax.plot(x, group[pre_col], color=PRE_COLOR, marker="o",
-                linewidth=1.5, label=f"Pre-Seizure ({pre_seizure_secs:g}s)")
-        ax.set_title(f"Average Coherence ({_band_label(band)}) | Animal: {animal}")
-        ax.set_ylabel("Avg MSC")
-        ax.set_ylim(0, 1.05)
-        ax.set_xlabel("Date/Time")
-        ax.legend(loc="upper left")
-        _format_date_axis(ax)
-
-    fig.suptitle(f"Longitudinal Coherence | Animal {animal}")
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
-    return fig
+    return longitudinal_animal_figure(
+        group_df, panels, figsize=(9, 9),
+        suptitle=f"Longitudinal Coherence | Animal {animal}",
+    )
 
 
 def plot_coherence_ratio_animal_summary(
@@ -485,32 +667,21 @@ def plot_coherence_ratio_animal_summary(
     Two stacked panels (low band on top, high band below); each shows the ratio
     of during-seizure to pre-seizure band-averaged MSC against recording time.
     A dashed reference line at ratio=1 marks equal coherence (above => the
-    seizure is more coherent than its 30s baseline).
+    seizure is more coherent than its baseline).
     """
-    group = group_df.sort_values("File_Start_DT")
-    animal = group["Animal_ID"].iloc[0]
-    x = group["File_Start_DT"]
-
-    fig, axes = plt.subplots(2, 1, figsize=(9, 9))
+    animal = group_df["Animal_ID"].iloc[0]
     panels = [
-        (band_low, "Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
-        (band_high, "Avg_MSC_Seizure_High", "Avg_MSC_Pre_High"),
+        Panel(f"Coherence Ratio ({_band_label(band_low)}) | Animal: {animal}",
+              "Seizure MSC / Pre-Seizure MSC",
+              _draw_ratio("Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low")),
+        Panel(f"Coherence Ratio ({_band_label(band_high)}) | Animal: {animal}",
+              "Seizure MSC / Pre-Seizure MSC",
+              _draw_ratio("Avg_MSC_Seizure_High", "Avg_MSC_Pre_High")),
     ]
-
-    for ax, (band, sz_col, pre_col) in zip(axes, panels):
-        ratio = group[sz_col] / group[pre_col]
-        ax.plot(x, ratio, color=DURING_COLOR, marker="o", linewidth=1.5,
-                label="Seizure / Pre-Seizure")
-        ax.axhline(1.0, color="gray", linestyle="--", linewidth=1, label="Equal coherence")
-        ax.set_title(f"Coherence Ratio ({_band_label(band)}) | Animal: {animal}")
-        ax.set_ylabel("Seizure MSC / Pre-Seizure MSC")
-        ax.set_xlabel("Date/Time")
-        ax.legend(loc="upper left")
-        _format_date_axis(ax)
-
-    fig.suptitle(f"Longitudinal Coherence Ratio | Animal {animal}")
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
-    return fig
+    return longitudinal_animal_figure(
+        group_df, panels, figsize=(9, 9),
+        suptitle=f"Longitudinal Coherence Ratio | Animal {animal}",
+    )
 
 
 def plot_coherence_global_summary(
@@ -525,31 +696,18 @@ def plot_coherence_global_summary(
     use filled markers and pre-seizure values use faded open markers in the same
     per-animal colour.
     """
-    colors = _animal_colors(normalized_df["Animal_ID"])
-
-    fig, axes = plt.subplots(2, 1, figsize=(11, 9))
     panels = [
-        (band_low, "Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
-        (band_high, "Avg_MSC_Seizure_High", "Avg_MSC_Pre_High"),
+        Panel(f"Global Average Coherence ({_band_label(band_low)})", "Avg MSC",
+              _gdraw_seizure_pre("Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
+              ylim=(0, 1.05), after=_animal_legend(ncol=1)),
+        Panel(f"Global Average Coherence ({_band_label(band_high)})", "Avg MSC",
+              _gdraw_seizure_pre("Avg_MSC_Seizure_High", "Avg_MSC_Pre_High"),
+              ylim=(0, 1.05)),
     ]
-
-    for ax, (band, sz_col, pre_col) in zip(axes, panels):
-        for animal, group in normalized_df.groupby("Animal_ID"):
-            ax.scatter(group["Normalized_DT"], group[sz_col], color=colors[animal],
-                       s=42, alpha=0.85, label=f"{animal} (seiz)")
-            ax.scatter(group["Normalized_DT"], group[pre_col], facecolors="none",
-                       edgecolors=colors[animal], s=42, alpha=0.5, label=f"{animal} (pre)")
-        ax.set_title(f"Global Average Coherence ({_band_label(band)})")
-        ax.set_ylabel("Avg MSC")
-        ax.set_ylim(0, 1.05)
-        _format_day_axis(ax, day_zero)
-
-    axes[0].legend(title="Animal", loc="center left", bbox_to_anchor=(1.0, 0.5), ncol=1)
-    axes[1].set_xlabel("Experimental Days (Starting from Day 0)")
-
-    fig.suptitle("Population Coherence: Offset to Experimental Day 0")
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
-    return fig
+    return longitudinal_global_figure(
+        normalized_df, panels, day_zero=day_zero, figsize=(11, 9),
+        suptitle="Population Coherence: Offset to Experimental Day 0",
+    )
 
 
 def plot_coherence_ratio_global_summary(
@@ -564,47 +722,24 @@ def plot_coherence_ratio_global_summary(
     is scattered against experimental day in its own colour, with a dashed
     reference line at ratio=1 (above => seizure more coherent than its baseline).
     """
-    colors = _animal_colors(normalized_df["Animal_ID"])
-
-    fig, axes = plt.subplots(2, 1, figsize=(11, 9))
     panels = [
-        (band_low, "Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
-        (band_high, "Avg_MSC_Seizure_High", "Avg_MSC_Pre_High"),
+        Panel(f"Global Coherence Ratio ({_band_label(band_low)})",
+              "Seizure MSC / Pre-Seizure MSC",
+              _gdraw_ratio("Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
+              after=_animal_legend(ncol=1)),
+        Panel(f"Global Coherence Ratio ({_band_label(band_high)})",
+              "Seizure MSC / Pre-Seizure MSC",
+              _gdraw_ratio("Avg_MSC_Seizure_High", "Avg_MSC_Pre_High")),
     ]
-
-    for ax, (band, sz_col, pre_col) in zip(axes, panels):
-        for animal, group in normalized_df.groupby("Animal_ID"):
-            ratio = group[sz_col] / group[pre_col]
-            ax.scatter(group["Normalized_DT"], ratio, color=colors[animal],
-                       s=42, alpha=0.85, label=f"{animal}")
-        ax.axhline(1.0, color="gray", linestyle="--", linewidth=1)
-        ax.set_title(f"Global Coherence Ratio ({_band_label(band)})")
-        ax.set_ylabel("Seizure MSC / Pre-Seizure MSC")
-        _format_day_axis(ax, day_zero)
-
-    axes[0].legend(title="Animal", loc="center left", bbox_to_anchor=(1.0, 0.5), ncol=1)
-    axes[1].set_xlabel("Experimental Days (Starting from Day 0)")
-
-    fig.suptitle("Population Coherence Ratio: Offset to Experimental Day 0")
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
-    return fig
+    return longitudinal_global_figure(
+        normalized_df, panels, day_zero=day_zero, figsize=(11, 9),
+        suptitle="Population Coherence Ratio: Offset to Experimental Day 0",
+    )
 
 
 # ---------------------------------------------------------------------------
 # Phase time-delay summaries (mirror the coherence summaries)
 # ---------------------------------------------------------------------------
-def _bin_size_legend(ax, sc, loc):
-    """Attach a marker-size legend (coherent bins used) and return the artist."""
-    handles, labels = sc.legend_elements(
-        prop="sizes", num=4, alpha=0.6, color="gray",
-        func=_size_to_bins, fmt="{x:.0f}",
-    )
-    leg = ax.legend(handles, labels, title="Bins used", loc=loc,
-                    labelspacing=1.3, borderpad=0.8, framealpha=0.9)
-    ax.add_artist(leg)
-    return leg
-
-
 def plot_phase_delay_animal_summary(
     group_df: pd.DataFrame,
     band_low=(0.0, 14.0),
@@ -622,40 +757,25 @@ def plot_phase_delay_animal_summary(
     (bright, large) stand out. The delay is fit over the ``band_low`` band only;
     seizures with too few coherent bins are NaN and simply don't appear.
     """
-    group = group_df.sort_values("File_Start_DT")
-    animal = group["Animal_ID"].iloc[0]
-    x = group["File_Start_DT"]
+    animal = group_df["Animal_ID"].iloc[0]
+    bin_legend = lambda ax, sc: _bin_size_legend(ax, sc, loc="upper right")
 
-    fig, axes = plt.subplots(2, 1, figsize=(11, 10), sharex=True)
     panels = [
-        ("Tau_ms_Seizure", "Phase_R2_Seizure", "Phase_Nbins_Seizure",
-         f"During Seizure ({_band_label(band_low)})"),
-        ("Tau_ms_Pre", "Phase_R2_Pre", "Phase_Nbins_Pre",
-         f"Pre-Seizure {pre_seizure_secs:g}s ({_band_label(band_low)})"),
+        Panel(f"During Seizure ({_band_label(band_low)}) | Animal: {animal}",
+              "Time Delay (ms)",
+              _draw_confidence("Tau_ms_Seizure", "Phase_R2_Seizure",
+                               "Phase_Nbins_Seizure", cmap),
+              after=bin_legend),
+        Panel(f"Pre-Seizure {pre_seizure_secs:g}s ({_band_label(band_low)}) | Animal: {animal}",
+              "Time Delay (ms)",
+              _draw_confidence("Tau_ms_Pre", "Phase_R2_Pre", "Phase_Nbins_Pre", cmap),
+              after=bin_legend),
     ]
-
-    sc = None
-    for ax, (tau_col, r2_col, nbin_col, title) in zip(axes, panels):
-        # colour = fit R^2, size = coherent bins used.
-        sc = ax.scatter(
-            x, group[tau_col], c=group[r2_col], cmap=cmap, vmin=0.0, vmax=1.0,
-            s=_bins_to_size(group[nbin_col]), alpha=0.9, edgecolors="black",
-            linewidths=0.4, zorder=3,
-        )
-        ax.axhline(0.0, color="gray", linestyle="--", linewidth=1)
-        ax.set_title(f"{title} | Animal: {animal}")
-        ax.set_ylabel("Time Delay (ms)")
-        _bin_size_legend(ax, sc, loc="upper right")
-        _format_date_axis(ax)
-
-    axes[-1].set_xlabel("Date/Time")
-
-    # One colorbar shared across both panels (both use the same 0-1 R^2 scale).
-    cbar = fig.colorbar(sc, ax=axes, fraction=0.046, pad=0.02)
-    cbar.set_label("Phase-slope fit R²")
-
-    fig.suptitle(f"Longitudinal Phase Delay | Animal {animal}")
-    return fig
+    return longitudinal_animal_figure(
+        group_df, panels, figsize=(11, 10), sharex=True,
+        colorbar_label="Phase-slope fit R²",
+        suptitle=f"Longitudinal Phase Delay | Animal {animal}",
+    )
 
 
 def plot_phase_delay_global_summary(
@@ -675,27 +795,21 @@ def plot_phase_delay_global_summary(
     animals = list(dict.fromkeys(normalized_df["Animal_ID"]))
     marker_for = {a: _ANIMAL_MARKERS[i % len(_ANIMAL_MARKERS)] for i, a in enumerate(animals)}
 
-    fig, ax = plt.subplots(figsize=(12, 7))
+    def draw(ax, df, _colors):
+        sc = None
+        for a in animals:
+            g = df[df["Animal_ID"] == a]
+            sc = ax.scatter(
+                g["Normalized_DT"], g["Tau_ms_Seizure"], c=g["Phase_R2_Seizure"],
+                cmap=cmap, vmin=0.0, vmax=1.0, s=_bins_to_size(g["Phase_Nbins_Seizure"]),
+                marker=marker_for[a], alpha=0.9, edgecolors="black", linewidths=0.4,
+            )
+        ax.axhline(0.0, color="gray", linestyle="--", linewidth=1)
+        return sc
 
-    sc = None
-    for a in animals:
-        g = normalized_df[normalized_df["Animal_ID"] == a]
-        sc = ax.scatter(
-            g["Normalized_DT"], g["Tau_ms_Seizure"], c=g["Phase_R2_Seizure"],
-            cmap=cmap, vmin=0.0, vmax=1.0, s=_bins_to_size(g["Phase_Nbins_Seizure"]),
-            marker=marker_for[a], alpha=0.9, edgecolors="black", linewidths=0.4,
-        )
-
-    ax.axhline(0.0, color="gray", linestyle="--", linewidth=1)
-    ax.set_title(f"Global Phase Time Delay ({_band_label(band_low)})")
-    ax.set_ylabel("Time Delay (ms)")
-    ax.set_xlabel("Experimental Days (Starting from Day 0)")
-    _format_day_axis(ax, day_zero)
-
-    if sc is not None:
-        cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.02)
-        cbar.set_label("Phase-slope fit R²")
-
+    def after(ax, sc):
+        if sc is None:
+            return
         # Animal legend = marker shape (neutral colour); bin-size key beneath it.
         shape_handles = [
             plt.Line2D([0], [0], marker=marker_for[a], linestyle="none",
@@ -708,6 +822,12 @@ def plot_phase_delay_global_summary(
         ax.add_artist(animal_leg)
         _bin_size_legend(ax, sc, loc="upper right")
 
-    fig.suptitle("Population Phase Delay: Offset to Experimental Day 0")
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
-    return fig
+    panels = [
+        Panel(f"Global Phase Time Delay ({_band_label(band_low)})", "Time Delay (ms)",
+              draw, after=after),
+    ]
+    return longitudinal_global_figure(
+        normalized_df, panels, day_zero=day_zero, figsize=(12, 7),
+        colorbar_label="Phase-slope fit R²",
+        suptitle="Population Phase Delay: Offset to Experimental Day 0",
+    )

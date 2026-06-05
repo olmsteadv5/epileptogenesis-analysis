@@ -45,6 +45,12 @@ DURING_COLOR = "red"       # During-seizure series
 RACINE_CMAP = "viridis"      # Default colormap for Racine-coded scatter
 RACINE_SCALE_MAX = 7         # Default Racine severity scale upper bound
 ANIMAL_CMAP = "tab10"        # Qualitative colormap for per-animal series
+R2_CMAP = "viridis"          # Fit-quality (R^2) colour scale for phase-delay points
+# Marker shapes used to distinguish animals when colour already encodes R^2.
+_ANIMAL_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*", "<", ">"]
+# Marker-area mapping for coherent-bin counts: area = base + scale * bins.
+_BIN_SIZE_BASE = 25.0
+_BIN_SIZE_SCALE = 7.0
 
 # (year, month, day) -- must match config.DAY_ZERO / offset_to_day_zero's epoch.
 _DEFAULT_DAY_ZERO = (2000, 1, 1)
@@ -81,6 +87,16 @@ def _animal_colors(animal_ids):
     cmap = plt.get_cmap(ANIMAL_CMAP)
     uniq = list(dict.fromkeys(animal_ids))
     return {a: cmap(i % cmap.N) for i, a in enumerate(uniq)}
+
+
+def _bins_to_size(bins):
+    """Map coherent-bin counts to scatter marker areas (more bins -> bigger)."""
+    return _BIN_SIZE_BASE + _BIN_SIZE_SCALE * np.asarray(bins, dtype=float)
+
+
+def _size_to_bins(sizes):
+    """Inverse of ``_bins_to_size`` -- used to label the marker-size legend."""
+    return (np.asarray(sizes) - _BIN_SIZE_BASE) / _BIN_SIZE_SCALE
 
 
 # ---------------------------------------------------------------------------
@@ -577,64 +593,68 @@ def plot_coherence_ratio_global_summary(
 # ---------------------------------------------------------------------------
 # Phase time-delay summaries (mirror the coherence summaries)
 # ---------------------------------------------------------------------------
+def _bin_size_legend(ax, sc, loc):
+    """Attach a marker-size legend (coherent bins used) and return the artist."""
+    handles, labels = sc.legend_elements(
+        prop="sizes", num=4, alpha=0.6, color="gray",
+        func=_size_to_bins, fmt="{x:.0f}",
+    )
+    leg = ax.legend(handles, labels, title="Bins used", loc=loc,
+                    labelspacing=1.3, borderpad=0.8, framealpha=0.9)
+    ax.add_artist(leg)
+    return leg
+
+
 def plot_phase_delay_animal_summary(
     group_df: pd.DataFrame,
     band_low=(0.0, 14.0),
     pre_seizure_secs: float = 30,
-    min_bins: int = 3,
+    cmap: str = R2_CMAP,
 ):
-    """Per-animal phase-derived time-delay trends over time.
+    """Per-animal phase-derived time delay over time, weighted by fit confidence.
 
-    Three stacked panels against recording time, each point a seizure:
-    the inter-channel time delay (ms) during the seizure vs its pre-seizure
-    baseline, the R^2 of the phase-slope fit behind each delay estimate, and the
-    number of coherent frequency bins that survived the MSC gate to enter the
-    fit. Delays rest on a dashed zero line (positive => channel 1 leads). The
-    delay is fit over the ``band_low`` band only. Seizures with too few coherent
-    bins come back as NaN and simply leave a gap.
+    Two stacked panels against recording time -- during-seizure on top,
+    pre-seizure baseline below -- one point per seizure in each. Every point is
+    the inter-channel time delay (ms), resting on a dashed zero line (positive
+    => channel 1 leads), **coloured by the phase-slope fit R²** (shared colorbar)
+    and **sized by the number of coherent frequency bins** that entered the fit,
+    so unreliable estimates (dark, small) visually recede and trustworthy ones
+    (bright, large) stand out. The delay is fit over the ``band_low`` band only;
+    seizures with too few coherent bins are NaN and simply don't appear.
     """
     group = group_df.sort_values("File_Start_DT")
     animal = group["Animal_ID"].iloc[0]
     x = group["File_Start_DT"]
-    pre_label = f"Pre-Seizure ({pre_seizure_secs:g}s)"
 
-    fig, axes = plt.subplots(3, 1, figsize=(9, 12))
+    fig, axes = plt.subplots(2, 1, figsize=(11, 10), sharex=True)
+    panels = [
+        ("Tau_ms_Seizure", "Phase_R2_Seizure", "Phase_Nbins_Seizure",
+         f"During Seizure ({_band_label(band_low)})"),
+        ("Tau_ms_Pre", "Phase_R2_Pre", "Phase_Nbins_Pre",
+         f"Pre-Seizure {pre_seizure_secs:g}s ({_band_label(band_low)})"),
+    ]
 
-    # Panel 0 -- estimated time delay (during vs pre)
-    axes[0].plot(x, group["Tau_ms_Seizure"], color=DURING_COLOR, marker="o",
-                 linewidth=1.5, label="During Seizure")
-    axes[0].plot(x, group["Tau_ms_Pre"], color=PRE_COLOR, marker="o",
-                 linewidth=1.5, label=pre_label)
-    axes[0].axhline(0.0, color="gray", linestyle="--", linewidth=1, label="Zero delay")
-    axes[0].set_title(f"Phase Time Delay ({_band_label(band_low)}) | Animal: {animal}")
-    axes[0].set_ylabel("Time Delay (ms)")
-
-    # Panel 1 -- quality of the phase-slope fit behind each delay
-    axes[1].plot(x, group["Phase_R2_Seizure"], color=DURING_COLOR, marker="o",
-                 linewidth=1.5, label="During Seizure")
-    axes[1].plot(x, group["Phase_R2_Pre"], color=PRE_COLOR, marker="o",
-                 linewidth=1.5, label=pre_label)
-    axes[1].set_title(f"Phase-Slope Fit Quality | Animal: {animal}")
-    axes[1].set_ylabel("R²")
-    axes[1].set_ylim(0, 1.05)
-
-    # Panel 2 -- how many coherent bins supported each fit
-    axes[2].plot(x, group["Phase_Nbins_Seizure"], color=DURING_COLOR, marker="o",
-                 linewidth=1.5, label="During Seizure")
-    axes[2].plot(x, group["Phase_Nbins_Pre"], color=PRE_COLOR, marker="o",
-                 linewidth=1.5, label=pre_label)
-    axes[2].axhline(min_bins, color="gray", linestyle="--", linewidth=1,
-                    label=f"Min bins ({min_bins})")
-    axes[2].set_title(f"Coherent Bins in Fit | Animal: {animal}")
-    axes[2].set_ylabel("Bins Used (MSC ≥ gate)")
-
-    for ax in axes:
-        ax.set_xlabel("Date/Time")
-        ax.legend(loc="upper left")
+    sc = None
+    for ax, (tau_col, r2_col, nbin_col, title) in zip(axes, panels):
+        # colour = fit R^2, size = coherent bins used.
+        sc = ax.scatter(
+            x, group[tau_col], c=group[r2_col], cmap=cmap, vmin=0.0, vmax=1.0,
+            s=_bins_to_size(group[nbin_col]), alpha=0.9, edgecolors="black",
+            linewidths=0.4, zorder=3,
+        )
+        ax.axhline(0.0, color="gray", linestyle="--", linewidth=1)
+        ax.set_title(f"{title} | Animal: {animal}")
+        ax.set_ylabel("Time Delay (ms)")
+        _bin_size_legend(ax, sc, loc="upper right")
         _format_date_axis(ax)
 
+    axes[-1].set_xlabel("Date/Time")
+
+    # One colorbar shared across both panels (both use the same 0-1 R^2 scale).
+    cbar = fig.colorbar(sc, ax=axes, fraction=0.046, pad=0.02)
+    cbar.set_label("Phase-slope fit R²")
+
     fig.suptitle(f"Longitudinal Phase Delay | Animal {animal}")
-    fig.tight_layout(rect=(0, 0, 1, 0.98))
     return fig
 
 
@@ -642,43 +662,51 @@ def plot_phase_delay_global_summary(
     normalized_df: pd.DataFrame,
     band_low=(0.0, 14.0),
     day_zero: tuple[int, int, int] = _DEFAULT_DAY_ZERO,
-    min_bins: int = 3,
+    cmap: str = R2_CMAP,
 ):
-    """Global phase-derived time delay: all animals offset to Day 0, by animal.
+    """Global phase-derived time delay: all animals offset to Day 0.
 
-    Three stacked panels against experimental day, each point a seizure: the
-    inter-channel time delay (ms), the phase-slope fit R^2, and the number of
-    coherent bins in the fit. During-seizure values use filled markers;
-    pre-seizure values use faded open markers in the same per-animal colour.
+    A single panel against experimental day, one point per seizure (during
+    seizure only). Confidence is encoded the same way as the per-animal plot:
+    **colour = phase-slope fit R²** (colorbar) and **size = coherent bins used**.
+    Animals are distinguished by **marker shape** (legend), so the colour channel
+    stays free for fit quality. A dashed zero line marks no delay.
     """
-    colors = _animal_colors(normalized_df["Animal_ID"])
+    animals = list(dict.fromkeys(normalized_df["Animal_ID"]))
+    marker_for = {a: _ANIMAL_MARKERS[i % len(_ANIMAL_MARKERS)] for i, a in enumerate(animals)}
 
-    fig, axes = plt.subplots(3, 1, figsize=(11, 13))
-    panels = [
-        ("Tau_ms_Seizure", "Tau_ms_Pre",
-         f"Global Phase Time Delay ({_band_label(band_low)})", "Time Delay (ms)", None),
-        ("Phase_R2_Seizure", "Phase_R2_Pre",
-         "Global Phase-Slope Fit Quality", "R²", (0, 1.05)),
-        ("Phase_Nbins_Seizure", "Phase_Nbins_Pre",
-         "Global Coherent Bins in Fit", "Bins Used (MSC ≥ gate)", None),
-    ]
+    fig, ax = plt.subplots(figsize=(12, 7))
 
-    for ax, (sz_col, pre_col, title, ylabel, ylim) in zip(axes, panels):
-        for animal, group in normalized_df.groupby("Animal_ID"):
-            ax.scatter(group["Normalized_DT"], group[sz_col], color=colors[animal],
-                       s=42, alpha=0.85, label=f"{animal} (seiz)")
-            ax.scatter(group["Normalized_DT"], group[pre_col], facecolors="none",
-                       edgecolors=colors[animal], s=42, alpha=0.5, label=f"{animal} (pre)")
-        ax.set_title(title)
-        ax.set_ylabel(ylabel)
-        if ylim is not None:
-            ax.set_ylim(*ylim)
-        _format_day_axis(ax, day_zero)
+    sc = None
+    for a in animals:
+        g = normalized_df[normalized_df["Animal_ID"] == a]
+        sc = ax.scatter(
+            g["Normalized_DT"], g["Tau_ms_Seizure"], c=g["Phase_R2_Seizure"],
+            cmap=cmap, vmin=0.0, vmax=1.0, s=_bins_to_size(g["Phase_Nbins_Seizure"]),
+            marker=marker_for[a], alpha=0.9, edgecolors="black", linewidths=0.4,
+        )
 
-    axes[0].axhline(0.0, color="gray", linestyle="--", linewidth=1)
-    axes[2].axhline(min_bins, color="gray", linestyle="--", linewidth=1)
-    axes[0].legend(title="Animal", loc="center left", bbox_to_anchor=(1.0, 0.5), ncol=1)
-    axes[2].set_xlabel("Experimental Days (Starting from Day 0)")
+    ax.axhline(0.0, color="gray", linestyle="--", linewidth=1)
+    ax.set_title(f"Global Phase Time Delay ({_band_label(band_low)})")
+    ax.set_ylabel("Time Delay (ms)")
+    ax.set_xlabel("Experimental Days (Starting from Day 0)")
+    _format_day_axis(ax, day_zero)
+
+    if sc is not None:
+        cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.02)
+        cbar.set_label("Phase-slope fit R²")
+
+        # Animal legend = marker shape (neutral colour); bin-size key beneath it.
+        shape_handles = [
+            plt.Line2D([0], [0], marker=marker_for[a], linestyle="none",
+                       markerfacecolor="gray", markeredgecolor="black",
+                       markersize=8, label=str(a))
+            for a in animals
+        ]
+        animal_leg = ax.legend(handles=shape_handles, title="Animal", loc="upper left",
+                               framealpha=0.9)
+        ax.add_artist(animal_leg)
+        _bin_size_legend(ax, sc, loc="upper right")
 
     fig.suptitle("Population Phase Delay: Offset to Experimental Day 0")
     fig.tight_layout(rect=(0, 0, 1, 0.98))

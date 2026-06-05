@@ -34,7 +34,7 @@ COH_NOVERLAP = 128             # Overlap between adjacent Welch segments (sample
 COH_NFFT = 1024                # FFT length -> frequency resolution
 COH_BAND_LOW_HZ = (0.0, 14.0)  # Low-frequency band of interest (Hz)
 COH_BAND_HIGH_HZ = (14.0, 55.0)  # High-frequency band of interest (Hz)
-PRE_SEIZURE_SECS = 30          # Pre-seizure window used for the coherence baseline
+PRE_SEIZURE_SECS = 60          # Pre-seizure window used for the coherence baseline
 PHASE_MSC_THRESHOLD = 0.1   # MSC gate for phase slope fitting (0-14 Hz band)
 
 # ---------------------------------------------------------------------------

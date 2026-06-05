@@ -16,6 +16,7 @@ CORRELATION_OUTPUT_DIR = "Correlation_Output"         # Per-seizure correlation 
 COHERENCE_OUTPUT_DIR = "Coherence_Output"             # Per-seizure coherence figures
 CORRELATION_SUMMARY_OUTPUT_DIR = "Correlation_Summary_Output"  # Per-animal + global correlation summaries
 COHERENCE_SUMMARY_OUTPUT_DIR = "Coherence_Summary_Output"      # Per-animal + global coherence summaries
+COHERENCE_DELAY_OUTPUT_DIR = "Coherence_Delay_Output"          # Per-animal + global phase time-delay summaries
 
 # ---------------------------------------------------------------------------
 # Correlation parameters
@@ -34,6 +35,7 @@ COH_NFFT = 1024                # FFT length -> frequency resolution
 COH_BAND_LOW_HZ = (0.0, 14.0)  # Low-frequency band of interest (Hz)
 COH_BAND_HIGH_HZ = (14.0, 55.0)  # High-frequency band of interest (Hz)
 PRE_SEIZURE_SECS = 30          # Pre-seizure window used for the coherence baseline
+PHASE_MSC_THRESHOLD = 0.1   # MSC gate for phase slope fitting (0-14 Hz band)
 
 # ---------------------------------------------------------------------------
 # Baseline filtering

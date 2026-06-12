@@ -20,10 +20,12 @@ from datetime import datetime
 from typing import Callable
 
 import matplotlib.dates as mdates
+import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
+
 
 # ---------------------------------------------------------------------------
 # Shared style / theme
@@ -53,7 +55,7 @@ DURING_COLOR = "red"       # During-seizure series
 # args (keeping this module config-free, like the analysis modules).
 RACINE_CMAP = "viridis"      # Default colormap for Racine-coded scatter
 RACINE_SCALE_MAX = 7         # Default Racine severity scale upper bound
-ANIMAL_CMAP = "tab10"        # Qualitative colormap for per-animal series
+ANIMAL_CMAP = "Accent"        # Qualitative colormap for per-animal series
 R2_CMAP = "viridis"          # Fit-quality (R^2) colour scale for phase-delay points
 # Marker shapes used to distinguish animals when colour already encodes R^2.
 _ANIMAL_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*", "<", ">"]
@@ -336,6 +338,166 @@ def plot_coherence(
     if title:
         ax.set_title(title)
     ax.legend()
+    fig.tight_layout()
+    return fig
+
+
+def plot_msc_by_animal(
+    coherence_details,
+    band_low=(0.0, 14.0),
+    which: str = "seizure",
+    msc_ylim=(0.0, 1.05),
+    line_alpha: float = 0.45,
+):
+    """One raw-MSC-vs-frequency panel per animal, matching plot_phase_by_animal.
+
+    Each seizure is one translucent MSC curve over ``band_low``, coloured by
+    animal. Same faceting and sorted animal order as the phase grid so the two
+    stack column-for-column.
+    """
+    if which == "seizure":
+        f_msc, v_msc = "freqs_seizure", "msc_seizure"
+    else:
+        f_msc, v_msc = "freqs_pre", "msc_pre"
+
+    lo, hi = band_low
+    animals = sorted({d["Animal_ID"] for d in coherence_details})
+    colors = _animal_colors(animals)
+    n = len(animals)
+
+    fig, raw = plt.subplots(1, n, figsize=(4.2 * n, 4.2),
+                            sharex=True, sharey=True, squeeze=False)
+    axes = raw[0]
+    for ax, animal in zip(axes, animals):
+        color = colors[animal]
+        for d in coherence_details:
+            if d["Animal_ID"] != animal:
+                continue
+            freqs = np.asarray(d[f_msc]); msc = np.asarray(d[v_msc])
+            m = (freqs >= lo) & (freqs <= hi)
+            ax.plot(freqs[m], msc[m], color=color, alpha=line_alpha, linewidth=1.0)
+        ax.set_title(f"Animal {animal}")
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(*msc_ylim)
+        ax.set_xlabel("Frequency (Hz)")
+    axes[0].set_ylabel("MSC")
+    fig.suptitle(f"Raw MSC by animal ({_band_label(band_low)}, {which})")
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    return fig
+
+def plot_phase_by_animal(
+    coherence_details,
+    band_low=(0.0, 14.0),
+    which: str = "seizure",
+    align_phase: bool = True,
+    phase_ylim=None,
+    color_by: str = "msc",     # "msc" -> opacity ; "colorbar" -> viridis + colorbar
+    alpha_floor: float = 0.08,
+):
+    """One phase-vs-frequency panel per animal; each point encodes its own MSC.
+
+    ``coherence_details`` is the list of per-seizure dicts (compute_seizure_coherence
+    output + an "Animal_ID" key). With ``color_by="msc"`` a point's opacity is its
+    MSC (solid = trustworthy). With ``color_by="colorbar"`` points are coloured by
+    MSC on a shared viridis scale instead.
+    """
+    if which == "seizure":
+        f_ph, v_ph = "phase_sz_freqs", "phase_sz_values"
+        f_msc, v_msc = "freqs_seizure", "msc_seizure"
+    else:
+        f_ph, v_ph = "phase_pre_freqs", "phase_pre_values"
+        f_msc, v_msc = "freqs_pre", "msc_pre"
+
+    lo, hi = band_low
+    animals = sorted({d["Animal_ID"] for d in coherence_details})
+    colors = _animal_colors(animals)
+
+    n = len(animals)
+    fig, raw_axes = plt.subplots(
+        1, n, figsize=(4.2 * n, 4.2), sharex=True, sharey=True, squeeze=False,
+        layout="constrained" if color_by == "colorbar" else None,
+    )
+    axes = raw_axes[0]
+    mappable = None
+
+    for ax, animal in zip(axes, animals):
+        base = mcolors.to_rgb(colors[animal])
+        for d in coherence_details:
+            if d["Animal_ID"] != animal:
+                continue
+            pf = np.asarray(d[f_ph], dtype=float)
+            pv = np.asarray(d[v_ph], dtype=float)
+            if pf.size < 2:
+                continue
+            if align_phase:
+                pv = pv - pv[0]
+            msc_pts = np.interp(pf, np.asarray(d[f_msc]), np.asarray(d[v_msc]))
+
+            if color_by == "msc":
+                a = np.clip(msc_pts, alpha_floor, 1.0)
+                rgba = np.zeros((len(a), 4)); rgba[:, :3] = base; rgba[:, 3] = a
+                ax.plot(pf, pv, color=base, alpha=0.12, linewidth=0.8)
+                ax.scatter(pf, pv, c=rgba, s=12, edgecolors="none")
+            else:
+                ax.plot(pf, pv, color="gray", alpha=0.15, linewidth=0.8)
+                mappable = ax.scatter(pf, pv, c=msc_pts, cmap="viridis",
+                                      vmin=0.0, vmax=1.0, s=12, edgecolors="none")
+
+        ax.set_title(f"Animal {animal}")
+        ax.set_xlim(lo, hi)
+        ax.axhline(0.0, color="gray", linestyle="--", linewidth=1)
+        if phase_ylim is not None:
+            ax.set_ylim(*phase_ylim)
+        ax.set_xlabel("Frequency (Hz)")
+    axes[0].set_ylabel("Phase (rad)" + (", aligned to 0" if align_phase else ""))
+
+    if color_by == "colorbar" and mappable is not None:
+        fig.colorbar(mappable, ax=list(axes), fraction=0.025, pad=0.02).set_label("MSC")
+    fig.suptitle(f"Phase responses by animal ({_band_label(band_low)}, {which})")
+    if color_by != "colorbar":
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+    return fig
+
+def plot_delay_distribution(
+    df: pd.DataFrame,
+    group_col: str = "Animal_ID",
+    value_col: str = "Tau_ms_Seizure",
+    r2_col: str = "Phase_R2_Seizure",
+    nbins_col: str = "Phase_Nbins_Seizure",
+    r2_min: float = 0.0,
+    nbins_min: int = 3,
+    title: str | None = None,
+):
+    """Box + strip plot of per-seizure phase delay, grouped by animal.
+
+    Keeps only rows whose fit cleared ``r2_min`` and ``nbins_min`` so the
+    distribution reflects trustworthy delays. Dots are individual seizures.
+    """
+    d = df[df[value_col].notna()].copy()
+    if r2_col in d:
+        d = d[d[r2_col].fillna(0) >= r2_min]
+    if nbins_col in d:
+        d = d[d[nbins_col].fillna(0) >= nbins_min]
+
+    groups = sorted(d[group_col].unique())
+    data = [d.loc[d[group_col] == g, value_col].values for g in groups]
+    colors = _animal_colors(groups)
+
+    fig, ax = plt.subplots(figsize=(1.6 * len(groups) + 3, 5))
+    ax.axhline(0.0, color="gray", linestyle="--", linewidth=1)
+    bp = ax.boxplot(data, positions=range(len(groups)), widths=0.55,
+                    showfliers=False, patch_artist=True)
+    for patch, g in zip(bp["boxes"], groups):
+        patch.set_facecolor(colors[g]); patch.set_alpha(0.35)
+    for i, (g, arr) in enumerate(zip(groups, data)):
+        jitter = (np.random.default_rng(i).random(len(arr)) - 0.5) * 0.25
+        ax.scatter(np.full(len(arr), i) + jitter, arr, color=colors[g],
+                   s=18, alpha=0.8, edgecolors="black", linewidths=0.3)
+    ax.set_xticks(range(len(groups)))
+    ax.set_xticklabels([f"Animal {g}\n(n={len(a)})" for g, a in zip(groups, data)])
+    ax.set_ylabel("Phase delay (ms)")
+    ax.set_title(title or f"Per-seizure delay by animal "
+                          f"(r2>={r2_min}, bins>={nbins_min})")
     fig.tight_layout()
     return fig
 

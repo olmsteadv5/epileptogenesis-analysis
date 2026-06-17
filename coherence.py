@@ -96,6 +96,16 @@ def compute_seizure_coherence(
         "phase_sz_values": phase_sz["phase_used"],
         "phase_pre_freqs": phase_pre["freqs_used"],
         "phase_pre_values": phase_pre["phase_used"],
+        # Discarded sub-threshold bins, shown in grey on the per-seizure plot.
+        "phase_sz_unused_freqs": phase_sz["freqs_unused"],
+        "phase_sz_unused_values": phase_sz["phase_unused"],
+        "phase_pre_unused_freqs": phase_pre["freqs_unused"],
+        "phase_pre_unused_values": phase_pre["phase_unused"],
+        # Fit line coefficients so the regression can be redrawn per seizure.
+        "phase_sz_slope": phase_sz["slope"],
+        "phase_sz_intercept": phase_sz["intercept"],
+        "phase_pre_slope": phase_pre["slope"],
+        "phase_pre_intercept": phase_pre["intercept"],
     }
 
 def compute_phase_delay(
@@ -122,6 +132,12 @@ def compute_phase_delay(
     msc_mask = msc >= msc_threshold
     mask = band_mask & msc_mask
 
+    # Bins in the band that failed the coherence gate. Kept only so the plot can show them
+    # in grey; raw wrapped phase here so they never touch the fit.
+    unused_mask = band_mask & ~msc_mask
+    freqs_unused = freqs[unused_mask]
+    phase_unused = np.angle(Pxy[unused_mask])
+
     # Need at least 3 surviving bins to fit a meaningful straight line.
     n_bins = int(np.sum(mask))
 
@@ -132,7 +148,10 @@ def compute_phase_delay(
             "r_squared": float("nan"),
             "freqs_used": np.array([]),
             "phase_used": np.array([]),
+            "freqs_unused": freqs_unused,
+            "phase_unused": phase_unused,
             "slope": float("nan"),
+            "intercept": float("nan"),
         }
 
     # Bins that passed the mask.
@@ -150,6 +169,7 @@ def compute_phase_delay(
     # Weighted straight-line fit of phase vs frequency.
     coeffs = np.polyfit(freqs_masked, phase_unwrap, 1, w=weights)
     slope = coeffs[0]
+    intercept = coeffs[1]
 
     # Convert the phase slope to a time delay (see arxiv.org/abs/0712.2352).
     tau_s = -slope / (2 * np.pi)
@@ -167,5 +187,8 @@ def compute_phase_delay(
         "r_squared": r_squared,
         "freqs_used": freqs_masked,
         "phase_used": phase_unwrap,
+        "freqs_unused": freqs_unused,
+        "phase_unused": phase_unused,
         "slope": slope,  # rad/Hz (= -2*pi*tau)
+        "intercept": intercept,  # rad, the fit's phase at 0 Hz
     }

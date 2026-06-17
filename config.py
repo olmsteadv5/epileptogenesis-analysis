@@ -8,6 +8,7 @@ COHERENCE_OUTPUT_DIR = "Coherence_Output"             # Per-seizure coherence fi
 CORRELATION_SUMMARY_OUTPUT_DIR = "Correlation_Summary_Output"  # Per-animal + global correlation summaries
 COHERENCE_SUMMARY_OUTPUT_DIR = "Coherence_Summary_Output"      # Per-animal + global coherence summaries
 COHERENCE_DELAY_OUTPUT_DIR = "Coherence_Delay_Output"          # Per-animal + global phase time-delay summaries
+PHASE_DELAY_OUTPUT_DIR = "Phase_Delay_Output"                  # Per-seizure phase-vs-frequency regression figures
 
 # Correlation parameters
 CORR_THRESHOLD = 0.65          # |correlation| above this counts as "synchronized"

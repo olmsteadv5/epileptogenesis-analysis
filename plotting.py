@@ -307,6 +307,77 @@ def plot_coherence(
     return fig
 
 
+def plot_phase_delay_seizure(
+    coh,
+    band_low=(0.0, 14.0),
+    title: str | None = None,
+):
+    # Per-seizure phase-vs-frequency regression: during seizure (left) vs pre-seizure (right).
+    # Each point is a coherent frequency bin, coloured by its MSC; the MSC-weighted linear fit is
+    # drawn through them and the resulting delay / R2 / bin count are annotated in the corner.
+    lo, hi = band_low
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharey=True, layout="constrained")
+
+    # (freqs, phase, unused-freqs, unused-phase, slope, intercept, msc-freqs, msc-curve,
+    #  tau, r2, nbins, label)
+    panels = [
+        ("phase_sz_freqs", "phase_sz_values", "phase_sz_unused_freqs", "phase_sz_unused_values",
+         "phase_sz_slope", "phase_sz_intercept", "freqs_seizure", "msc_seizure",
+         "tau_ms_seizure", "phase_r2_seizure", "phase_nbins_seizure", "During Seizure"),
+        ("phase_pre_freqs", "phase_pre_values", "phase_pre_unused_freqs", "phase_pre_unused_values",
+         "phase_pre_slope", "phase_pre_intercept", "freqs_pre", "msc_pre",
+         "tau_ms_pre", "phase_r2_pre", "phase_nbins_pre", "Pre-Seizure"),
+    ]
+
+    mappable = None
+    for ax, (fk, vk, ufk, uvk, sk, ik, fmk, vmk, tauk, r2k, nbk, label) in zip(axes, panels):
+        # Discarded sub-threshold bins drawn first so they sit behind the used points.
+        uf = np.asarray(coh[ufk], dtype=float)
+        uv = np.asarray(coh[uvk], dtype=float)
+        if uf.size >= 1:
+            ax.scatter(uf, uv, color="lightgray", s=14, edgecolors="none", zorder=1)
+
+        pf = np.asarray(coh[fk], dtype=float)
+        pv = np.asarray(coh[vk], dtype=float)
+
+        # Only the bins that survived the MSC gate have points to draw.
+        if pf.size >= 1:
+            # MSC at each used bin sets the point colour.
+            msc_pts = np.interp(pf, np.asarray(coh[fmk]), np.asarray(coh[vmk]))
+            mappable = ax.scatter(pf, pv, c=msc_pts, cmap=R2_CMAP, vmin=0.0, vmax=1.0,
+                                  s=22, edgecolors="black", linewidths=0.3, zorder=3)
+
+            # Redraw the fitted line across the span of used bins.
+            slope, intercept = coh[sk], coh[ik]
+            if np.isfinite(slope):
+                xline = np.array([pf.min(), pf.max()])
+                ax.plot(xline, slope * xline + intercept, color=DURING_COLOR,
+                        linewidth=1.5, zorder=2)
+
+        # Delay / fit-quality summary for this window.
+        ax.text(0.03, 0.97,
+                f"τ = {coh[tauk]:.2f} ms\nR² = {coh[r2k]:.3f}\nbins = {coh[nbk]}",
+                transform=ax.transAxes, va="top", ha="left",
+                bbox=dict(boxstyle="round", facecolor="white", alpha=0.75))
+        ax.set_title(label)
+        ax.set_xlim(lo, hi)
+        ax.set_xlabel("Frequency (Hz)")
+
+    axes[0].set_ylabel("Unwrapped phase (rad)")
+
+    # Note explaining the grey points (raw phase of bins below the MSC gate, not fitted).
+    grey_handle = plt.Line2D([0], [0], marker="o", linestyle="none", markerfacecolor="lightgray",
+                             markeredgecolor="none", markersize=6,
+                             label="Below MSC threshold (not used in fit)")
+    axes[0].legend(handles=[grey_handle], loc="lower left", fontsize=8, framealpha=0.85)
+
+    if mappable is not None:
+        fig.colorbar(mappable, ax=list(axes), fraction=0.025, pad=0.02).set_label("MSC")
+    if title:
+        fig.suptitle(title)
+    return fig
+
+
 def plot_msc_by_animal(
     coherence_details,
     band_low=(0.0, 14.0),

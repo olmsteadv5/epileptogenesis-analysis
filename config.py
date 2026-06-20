@@ -1,14 +1,31 @@
 # Paths
+import os
+
 FOLDER_PATH = "./OBE_Input"                 # Directory containing .OBE EEG files
 CSV_PATH = "./EEG_data_sheet.csv"           # Seizure metadata spreadsheet
 
-OVERVIEW_OUTPUT_DIR = "Overview_Output"               # 60-minute overview plots
-CORRELATION_OUTPUT_DIR = "Correlation_Output"         # Per-seizure correlation figures
-COHERENCE_OUTPUT_DIR = "Coherence_Output"             # Per-seizure coherence figures
-CORRELATION_SUMMARY_OUTPUT_DIR = "Correlation_Summary_Output"  # Per-animal + global correlation summaries
-COHERENCE_SUMMARY_OUTPUT_DIR = "Coherence_Summary_Output"      # Per-animal + global coherence summaries
-COHERENCE_DELAY_OUTPUT_DIR = "Coherence_Delay_Output"          # Per-animal + global phase time-delay summaries
-PHASE_DELAY_OUTPUT_DIR = "Phase_Delay_Output"                  # Per-seizure phase-vs-frequency regression figures
+# Everything lands under one root, grouped by analysis then by scope (per-seizure / per-animal / global).
+OUTPUT_ROOT = "Output"
+
+OVERVIEW_OUTPUT_DIR = os.path.join(OUTPUT_ROOT, "Overview")                  # 60-minute overview plots
+
+# Per-seizure figures from the main analysis loop.
+CORRELATION_SEIZURE_DIR = os.path.join(OUTPUT_ROOT, "Correlation", "Per_Seizure")
+COHERENCE_SEIZURE_DIR = os.path.join(OUTPUT_ROOT, "Coherence", "Per_Seizure")
+PHASE_DELAY_SEIZURE_DIR = os.path.join(OUTPUT_ROOT, "Phase_Delay", "Per_Seizure")
+
+# Per-animal longitudinal summaries.
+CORRELATION_ANIMAL_DIR = os.path.join(OUTPUT_ROOT, "Correlation", "Per_Animal")
+COHERENCE_ANIMAL_DIR = os.path.join(OUTPUT_ROOT, "Coherence", "Per_Animal")
+PHASE_DELAY_ANIMAL_DIR = os.path.join(OUTPUT_ROOT, "Phase_Delay", "Per_Animal")
+
+# Global, Day-0-normalized summaries across all animals.
+CORRELATION_GLOBAL_DIR = os.path.join(OUTPUT_ROOT, "Correlation", "Global")
+COHERENCE_GLOBAL_DIR = os.path.join(OUTPUT_ROOT, "Coherence", "Global")
+PHASE_DELAY_GLOBAL_DIR = os.path.join(OUTPUT_ROOT, "Phase_Delay", "Global")
+
+# Exploratory phase-delay grids (raw MSC, phase-vs-frequency).
+PHASE_DELAY_EXPLORATION_DIR = os.path.join(OUTPUT_ROOT, "Phase_Delay", "Exploration")
 
 # Correlation parameters
 CORR_THRESHOLD = 0.65          # |correlation| above this counts as "synchronized"

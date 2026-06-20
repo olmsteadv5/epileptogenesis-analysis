@@ -6,6 +6,9 @@ import numpy as np
 from scipy.signal import coherence, csd
 from scipy.signal.windows import hann
 
+# Bin count where phase-fit support reaches half weight in the confidence score.
+PHASE_BIN_HALF_SAT = 10
+
 def compute_msc(
     x: np.ndarray,
     y: np.ndarray,
@@ -91,6 +94,8 @@ def compute_seizure_coherence(
         "phase_r2_pre": phase_pre["r_squared"],
         "phase_nbins_seizure": phase_sz["n_bins_used"],
         "phase_nbins_pre": phase_pre["n_bins_used"],
+        "phase_confidence_seizure": phase_sz["confidence"],
+        "phase_confidence_pre": phase_pre["confidence"],
         # Raw phase-delay points for plotting.
         "phase_sz_freqs": phase_sz["freqs_used"],
         "phase_sz_values": phase_sz["phase_used"],
@@ -146,6 +151,7 @@ def compute_phase_delay(
             "tau_ms": float("nan"),
             "n_bins_used": n_bins,
             "r_squared": float("nan"),
+            "confidence": float("nan"),
             "freqs_used": np.array([]),
             "phase_used": np.array([]),
             "freqs_unused": freqs_unused,
@@ -181,10 +187,24 @@ def compute_phase_delay(
     ss_tot = np.sum(weights * (phase_unwrap - np.average(phase_unwrap, weights=weights)) ** 2)
     r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
+    # Fit confidence in [0, 1]: a geometric mean of fit linearity, bin coherence, and bin support,
+    # so any one weak term drags the score down.
+    if np.isfinite(r_squared):
+        # How linear the MSC-weighted phase-vs-frequency fit is.
+        r2_term = min(max(r_squared, 0.0), 1.0)
+        # Mean MSC of the bins that drove the fit.
+        msc_term = float(np.average(weights))
+        # Bin count saturating toward 1, half-weight at PHASE_BIN_HALF_SAT bins.
+        support_term = n_bins / (n_bins + PHASE_BIN_HALF_SAT)
+        confidence = float((r2_term * msc_term * support_term) ** (1.0 / 3.0))
+    else:
+        confidence = float("nan")
+
     return {
         "tau_ms": tau_ms,
         "n_bins_used": n_bins,
         "r_squared": r_squared,
+        "confidence": confidence,
         "freqs_used": freqs_masked,
         "phase_used": phase_unwrap,
         "freqs_unused": freqs_unused,

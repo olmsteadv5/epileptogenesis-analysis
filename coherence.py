@@ -22,7 +22,7 @@ def compute_msc(
     # Symmetric Hann window.
     win = hann(window, sym=True)
 
-    # scipy handles the Welch averaging and edge cases.
+    # scipy does the Welch averaging.
     freqs, msc = coherence(
         x,
         y,
@@ -126,7 +126,7 @@ def compute_phase_delay(
 ) -> dict:
     win = hann(window, sym=True)
 
-    # The cross-spectrum is complex; its angle is the phase difference per frequency.
+    # The cross-spectrum = the phase difference per frequency.
     freqs, Pxy = csd(x, y, fs = fs, window = win, noverlap = noverlap, nfft = nfft)
 
     # MSC, used below to gate which bins are trustworthy.
@@ -137,8 +137,7 @@ def compute_phase_delay(
     msc_mask = msc >= msc_threshold
     mask = band_mask & msc_mask
 
-    # Bins in the band that failed the coherence gate. Kept only so the plot can show them
-    # in grey; raw wrapped phase here so they never touch the fit.
+    # Bins in the band that failed the coherence gate. Kept only so the plot can show them in gray.
     unused_mask = band_mask & ~msc_mask
     freqs_unused = freqs[unused_mask]
     phase_unused = np.angle(Pxy[unused_mask])
@@ -188,7 +187,6 @@ def compute_phase_delay(
     r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
     # Fit confidence in [0, 1]: a geometric mean of fit linearity, bin coherence, and bin support,
-    # so any one weak term drags the score down.
     if np.isfinite(r_squared):
         # How linear the MSC-weighted phase-vs-frequency fit is.
         r2_term = min(max(r_squared, 0.0), 1.0)

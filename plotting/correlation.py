@@ -40,7 +40,7 @@ def plot_correlation(
     if ax is None:  # draw onto ax if given, otherwise make a standalone figure
         _, ax = plt.subplots(figsize=(9, 3))
 
-    ax.plot(time_axis, corrs, color="black", linewidth=1.2)
+    ax.plot(time_axis, corrs, color="white", linewidth=1.2)
     ax.axvline(seizure_start, color=SEIZURE_COLOR, linewidth=2)
     ax.axvline(seizure_end, color=SEIZURE_COLOR, linewidth=2)
     ax.axhline(corr_threshold, color=THRESHOLD_COLOR, linestyle="--")

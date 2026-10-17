@@ -1,13 +1,10 @@
-# Plot builders grouped by analysis type. Importing the package exposes every plot_* function
-# flat, so `import plotting as P` and existing P.plot_xxx(...) calls keep working unchanged.
+# decision: every plot_* is exposed flat so existing P.plot_xxx calls keep working
 
 import importlib
 
 from . import shared, overview, correlation, coherence, phase_delay
 
-# Reloading the package cascades to the submodules so notebook edits take effect without a kernel
-# restart (mirrors the importlib.reload(plotting) pattern in the exploration cell). shared first,
-# since the others import from it at module load.
+# decision: reloading cascades to the submodules so notebook edits apply without a restart. shared first, the others import it
 for _mod in (shared, overview, correlation, coherence, phase_delay):
     importlib.reload(_mod)
 

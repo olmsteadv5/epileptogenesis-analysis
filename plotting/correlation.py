@@ -1,4 +1,3 @@
-# Correlation plots: per-seizure rolling-correlation figures and longitudinal correlation summaries.
 
 from __future__ import annotations
 
@@ -25,7 +24,6 @@ from .shared import (
 )
 
 
-# Correlation + zoom
 def plot_correlation(
     corrs,
     time_axis,
@@ -35,9 +33,8 @@ def plot_correlation(
     title: str | None = None,
     ax=None,
 ):
-    # Rolling correlation trace with seizure span and threshold lines. time_axis,
-    # seizure_start and seizure_end are seconds from the start of the window.
-    if ax is None:  # draw onto ax if given, otherwise make a standalone figure
+    # explainer: times are seconds from the window start
+    if ax is None:  # explainer: draws onto ax if given, else makes its own figure
         _, ax = plt.subplots(figsize=(9, 3))
 
     ax.plot(time_axis, corrs, color="white", linewidth=1.2)
@@ -60,12 +57,11 @@ def plot_zoomed_segments(
     axes=None,
     fig=None,
 ):
-    # Zoomed overlays of the raw seizure signal, one axis per time segment, splitting the
-    # seizure into segment_secs chunks and plotting both channels in each.
+    # explainer: seizure split into segment_secs chunks, both channels in each
     samples_per_seg = int(math.floor(segment_secs * samp_freq))
     num_segments = max(1, math.ceil(len(raw_seiz1) / samples_per_seg))
 
-    if axes is None:  # build a standalone figure when no axes are supplied
+    if axes is None:
         fig, axes = plt.subplots(num_segments, 1, figsize=(9, 2 * num_segments))
         if num_segments == 1:
             axes = [axes]
@@ -102,11 +98,10 @@ def assemble_correlation_figure(
     segment_secs: float,
     title: str | None = None,
 ):
-    # Combine the correlation trace and the zoomed segments into one figure.
     samples_per_seg = int(math.floor(segment_secs * samp_freq))
     num_segments = max(1, math.ceil(len(raw_seiz1) / samples_per_seg))
 
-    # Matplotlib can't nest figures, so build one GridSpec: trace on top, a zoom row per segment.
+    # decision: matplotlib can't nest figures, so one GridSpec with the trace on top and a zoom row per segment
     img_height = (300 + num_segments * 150) / 100.0
     fig = plt.figure(figsize=(9, img_height))
     height_ratios = [0.25] + [0.75 / num_segments] * num_segments
@@ -125,9 +120,7 @@ def assemble_correlation_figure(
     return fig
 
 
-# Per-panel drawing strategies for the correlation summaries.
 def _draw_trend_racine(col, cmap, racine_max):
-    # Trend line + Racine-coloured scatter + mean line (per-animal).
     def draw(ax, x, g):
         y = g[col]
         ax.plot(x, y, color="gray", linewidth=1.5, alpha=0.4, label="Trend")
@@ -142,7 +135,6 @@ def _draw_trend_racine(col, cmap, racine_max):
 
 
 def _draw_racine_progression():
-    # Plain Racine-severity line + black markers (per-animal).
     def draw(ax, x, g):
         r = g["Racine_Scale"]
         ax.plot(x, r, color="gray", linewidth=1.5, alpha=0.5)
@@ -152,7 +144,6 @@ def _draw_racine_progression():
 
 
 def _gdraw_animal_scatter(col):
-    # Faint all-points trend line + per-animal coloured scatter (global).
     def draw(ax, df, colors):
         ax.plot(df["Normalized_DT"], df[col], color="gray", linewidth=1.0, alpha=0.2)
         for animal, group in df.groupby("Animal_ID"):
@@ -162,16 +153,12 @@ def _gdraw_animal_scatter(col):
     return draw
 
 
-# Correlation summaries
 def plot_animal_summary(
     group_df: pd.DataFrame,
     corr_threshold: float,
     cmap: str = RACINE_CMAP,
     racine_max: int = RACINE_SCALE_MAX,
 ):
-    # Per-animal longitudinal correlation summary (4 stacked panels).
-    # Panels: seizure duration, seconds above threshold, average correlation strength,
-    # and Racine severity, plotted against recording time.
     animal = group_df["Animal_ID"].iloc[0]
     ch1, ch2 = group_df["Ch1"].iloc[0], group_df["Ch2"].iloc[0]
     tag = f"Animal: {animal} (Ch {ch1}, {ch2})"
@@ -198,7 +185,6 @@ def plot_global_summary(
     racine_max: int = RACINE_SCALE_MAX,
     day_zero: tuple[int, int, int] = _DEFAULT_DAY_ZERO,
 ):
-    # Global correlation summary: all animals offset to Day 0, coloured by animal.
     panels = [
         Panel("Global Duration (Normalized Start)", "Seconds",
               _gdraw_animal_scatter("Seizure_Duration_Sec"), after=_animal_legend()),

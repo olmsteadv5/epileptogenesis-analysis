@@ -1,4 +1,3 @@
-# Magnitude squared coherence (MSC) analysis.
 
 from __future__ import annotations
 
@@ -6,7 +5,7 @@ import numpy as np
 from scipy.signal import coherence, csd
 from scipy.signal.windows import hann
 
-# Bin count where phase-fit support reaches half weight in the confidence score.
+# decision: bin count where support hits half weight in the confidence score
 PHASE_BIN_HALF_SAT = 10
 
 def compute_msc(
@@ -18,11 +17,8 @@ def compute_msc(
     nfft: int = 1024,
 ) -> tuple[np.ndarray, np.ndarray]:
 
-    # Magnitude squared coherence between x and y.
-    # Symmetric Hann window.
     win = hann(window, sym=True)
 
-    # scipy does the Welch averaging.
     freqs, msc = coherence(
         x,
         y,
@@ -35,16 +31,15 @@ def compute_msc(
 
 
 def _band_average(freqs: np.ndarray, msc: np.ndarray, band, include_low: bool) -> float:
-    # Mean MSC over a frequency band.
     lo, hi = band
 
-    # Avoid double-counting the boundary frequency between adjacent bands.
+    # decision: half-open band so the boundary bin isn't counted twice
     if include_low:
         mask = (freqs >= lo) & (freqs <= hi)
     else:
         mask = (freqs > lo) & (freqs <= hi)
 
-    # Guard against a band with no bins.
+    # explainer: a band can come out empty
     return float(np.mean(msc[mask])) if np.any(mask) else float("nan")
 
 
@@ -63,14 +58,12 @@ def compute_seizure_coherence(
     band_high=(14.0, 55.0),
     phase_msc_threshold: float = 0.1,
 ) -> dict:
-    # Compute during-seizure vs pre-seizure coherence for one seizure.
-    # Slice out the seizure and pre-seizure windows (half-open, 0-based sample indices).
+    # explainer: half-open 0-based sample slices
     sz1 = data1_full[seizure_start_sample:seizure_end_sample]
     sz2 = data2_full[seizure_start_sample:seizure_end_sample]
     pre1 = data1_full[pre_start_sample:pre_end_sample]
     pre2 = data2_full[pre_start_sample:pre_end_sample]
 
-    # MSC for the pre and during-seizure windows separately.
     freqs_seizure, msc_seizure = compute_msc(sz1, sz2, samp_freq, window, noverlap, nfft)
     freqs_pre, msc_pre = compute_msc(pre1, pre2, samp_freq, window, noverlap, nfft)
 
@@ -78,7 +71,6 @@ def compute_seizure_coherence(
     phase_pre = compute_phase_delay(pre1, pre2, samp_freq, window, noverlap, nfft, band_low_hz=band_low[0], band_high_hz=band_low[1], msc_threshold=phase_msc_threshold)
 
     return {
-        # MSC band averages and raw curves.
         "avg_msc_seizure_low": _band_average(freqs_seizure, msc_seizure, band_low, True),
         "avg_msc_pre_low": _band_average(freqs_pre, msc_pre, band_low, True),
         "avg_msc_seizure_high": _band_average(freqs_seizure, msc_seizure, band_high, False),
@@ -87,7 +79,6 @@ def compute_seizure_coherence(
         "msc_seizure": msc_seizure,
         "freqs_pre": freqs_pre,
         "msc_pre": msc_pre,
-        # Phase-delay summary.
         "tau_ms_seizure": phase_sz["tau_ms"],
         "tau_ms_pre": phase_pre["tau_ms"],
         "phase_r2_seizure": phase_sz["r_squared"],
@@ -96,17 +87,16 @@ def compute_seizure_coherence(
         "phase_nbins_pre": phase_pre["n_bins_used"],
         "phase_confidence_seizure": phase_sz["confidence"],
         "phase_confidence_pre": phase_pre["confidence"],
-        # Raw phase-delay points for plotting.
         "phase_sz_freqs": phase_sz["freqs_used"],
         "phase_sz_values": phase_sz["phase_used"],
         "phase_pre_freqs": phase_pre["freqs_used"],
         "phase_pre_values": phase_pre["phase_used"],
-        # Discarded sub-threshold bins, shown in grey on the per-seizure plot.
+        # decision: sub-threshold bins kept only so the plot can show them in grey
         "phase_sz_unused_freqs": phase_sz["freqs_unused"],
         "phase_sz_unused_values": phase_sz["phase_unused"],
         "phase_pre_unused_freqs": phase_pre["freqs_unused"],
         "phase_pre_unused_values": phase_pre["phase_unused"],
-        # Fit line coefficients so the regression can be redrawn per seizure.
+        # decision: fit coefficients saved so the line can be redrawn per seizure
         "phase_sz_slope": phase_sz["slope"],
         "phase_sz_intercept": phase_sz["intercept"],
         "phase_pre_slope": phase_pre["slope"],
@@ -126,23 +116,21 @@ def compute_phase_delay(
 ) -> dict:
     win = hann(window, sym=True)
 
-    # The cross-spectrum = the phase difference per frequency.
+    # explainer: cross-spectrum angle is the phase difference per frequency
     freqs, Pxy = csd(x, y, fs = fs, window = win, noverlap = noverlap, nfft = nfft)
 
-    # MSC, used below to gate which bins are trustworthy.
     _, msc = compute_msc(x, y, fs, window, noverlap, nfft)
 
-    # Keep only bins in the band that also clear the coherence threshold.
+    # decision: only bins in the band that also clear the coherence gate
     band_mask = (freqs >= band_low_hz) & (freqs <= band_high_hz)
     msc_mask = msc >= msc_threshold
     mask = band_mask & msc_mask
 
-    # Bins in the band that failed the coherence gate. Kept only so the plot can show them in gray.
     unused_mask = band_mask & ~msc_mask
     freqs_unused = freqs[unused_mask]
     phase_unused = np.angle(Pxy[unused_mask])
 
-    # Need at least 3 surviving bins to fit a meaningful straight line.
+    # decision: need at least 3 bins for a line worth fitting
     n_bins = int(np.sum(mask))
 
     if n_bins < 3:
@@ -159,40 +147,34 @@ def compute_phase_delay(
             "intercept": float("nan"),
         }
 
-    # Bins that passed the mask.
     freqs_masked = freqs[mask]
 
-    # Phase angle from the complex cross-spectrum, wrapped into [-pi, pi].
     phase_raw = np.angle(Pxy[mask])
 
-    # Unwrap so the phase is continuous across bins.
+    # explainer: unwrap so phase is continuous across bins
     phase_unwrap = np.unwrap(phase_raw)
 
-    # Weight each bin by its MSC so high-coherence bins drive the fit.
+    # decision: weight bins by MSC so coherent bins drive the fit
     weights = msc[mask]
 
-    # Weighted straight-line fit of phase vs frequency.
     coeffs = np.polyfit(freqs_masked, phase_unwrap, 1, w=weights)
     slope = coeffs[0]
     intercept = coeffs[1]
 
-    # Convert the phase slope to a time delay (see arxiv.org/abs/0712.2352).
+    # explainer: phase slope to time delay, see arxiv.org/abs/0712.2352
     tau_s = -slope / (2 * np.pi)
     tau_ms = tau_s * 1000
 
-    # R-squared of the fit.
     predicted = np.polyval(coeffs, freqs_masked)
     ss_res = np.sum(weights * (phase_unwrap - predicted) ** 2)
     ss_tot = np.sum(weights * (phase_unwrap - np.average(phase_unwrap, weights=weights)) ** 2)
     r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
-    # Fit confidence in [0, 1]: a geometric mean of fit linearity, bin coherence, and bin support,
+    # decision: confidence in [0, 1] = geometric mean of fit linearity, bin coherence and bin support
     if np.isfinite(r_squared):
-        # How linear the MSC-weighted phase-vs-frequency fit is.
         r2_term = min(max(r_squared, 0.0), 1.0)
-        # Mean MSC of the bins that drove the fit.
         msc_term = float(np.average(weights))
-        # Bin count saturating toward 1, half-weight at PHASE_BIN_HALF_SAT bins.
+        # explainer: saturates toward 1, half weight at PHASE_BIN_HALF_SAT bins
         support_term = n_bins / (n_bins + PHASE_BIN_HALF_SAT)
         confidence = float((r2_term * msc_term * support_term) ** (1.0 / 3.0))
     else:
@@ -207,6 +189,6 @@ def compute_phase_delay(
         "phase_used": phase_unwrap,
         "freqs_unused": freqs_unused,
         "phase_unused": phase_unused,
-        "slope": slope,  # rad/Hz (= -2*pi*tau)
-        "intercept": intercept,  # rad, the fit's phase at 0 Hz
+        "slope": slope,  # explainer: rad/Hz, = -2*pi*tau
+        "intercept": intercept,  # explainer: rad, phase at 0 Hz
     }

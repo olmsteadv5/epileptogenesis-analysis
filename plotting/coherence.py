@@ -1,4 +1,3 @@
-# Coherence plots: per-seizure MSC, the per-animal raw-MSC grid, and longitudinal coherence summaries.
 
 from __future__ import annotations
 
@@ -19,7 +18,6 @@ from .shared import (
 )
 
 
-# Coherence (single seizure)
 def plot_coherence(
     freqs_pre,
     msc_pre,
@@ -29,7 +27,6 @@ def plot_coherence(
     pre_seizure_secs: float = 30,
     title: str | None = None,
 ):
-    # Pre-seizure vs during-seizure MSC across frequency for one seizure.
     fig, ax = plt.subplots(figsize=(9, 4))
     ax.plot(freqs_pre, msc_pre, color=PRE_COLOR, linewidth=1.5,
             label=f"Pre-Seizure ({pre_seizure_secs:g}s)")
@@ -52,9 +49,7 @@ def plot_msc_by_animal(
     msc_ylim=(0.0, 1.05),
     line_alpha: float = 0.45,
 ):
-    # One raw-MSC-vs-frequency panel per animal, matching plot_phase_by_animal.
-    # Each seizure is one translucent MSC curve over band_low, coloured by animal. Same
-    # faceting and sorted animal order as the phase grid so the two stack column-for-column.
+    # decision: same faceting and animal order as plot_phase_by_animal so the two grids stack column for column
     if which == "seizure":
         f_msc, v_msc = "freqs_seizure", "msc_seizure"
     else:
@@ -86,9 +81,7 @@ def plot_msc_by_animal(
     return fig
 
 
-# Per-panel drawing strategies for the coherence summaries.
 def _draw_seizure_vs_pre(sz_col, pre_col, pre_secs):
-    # During-seizure vs pre-seizure line markers (per-animal).
     def draw(ax, x, g):
         ax.plot(x, g[sz_col], color=DURING_COLOR, marker="o", linewidth=1.5,
                 label="During Seizure")
@@ -100,7 +93,6 @@ def _draw_seizure_vs_pre(sz_col, pre_col, pre_secs):
 
 
 def _draw_ratio(sz_col, pre_col):
-    # Seizure/pre-seizure ratio line + reference line at 1 (per-animal).
     def draw(ax, x, g):
         ratio = g[sz_col] / g[pre_col]
         ax.plot(x, ratio, color=DURING_COLOR, marker="o", linewidth=1.5,
@@ -112,7 +104,6 @@ def _draw_ratio(sz_col, pre_col):
 
 
 def _gdraw_seizure_pre(sz_col, pre_col):
-    # Per-animal seizure (filled) vs pre-seizure (open) scatter (global).
     def draw(ax, df, colors):
         for animal, group in df.groupby("Animal_ID"):
             ax.scatter(group["Normalized_DT"], group[sz_col], color=colors[animal],
@@ -124,7 +115,6 @@ def _gdraw_seizure_pre(sz_col, pre_col):
 
 
 def _gdraw_ratio(sz_col, pre_col):
-    # Per-animal seizure/pre ratio scatter + reference line at 1 (global).
     def draw(ax, df, colors):
         for animal, group in df.groupby("Animal_ID"):
             ratio = group[sz_col] / group[pre_col]
@@ -135,16 +125,12 @@ def _gdraw_ratio(sz_col, pre_col):
     return draw
 
 
-# Coherence summaries
 def plot_coherence_animal_summary(
     group_df: pd.DataFrame,
     band_low=(0.0, 14.0),
     band_high=(14.0, 55.0),
     pre_seizure_secs: float = 30,
 ):
-    # Per-animal average-coherence trends over time, split by frequency band.
-    # Two stacked panels (low band on top, high band below); each shows the during-seizure
-    # vs pre-seizure band-averaged MSC against recording time.
     animal = group_df["Animal_ID"].iloc[0]
     panels = [
         Panel(f"Average Coherence ({_band_label(band_low)}) | Animal: {animal}", "Avg MSC",
@@ -165,8 +151,7 @@ def plot_coherence_ratio_animal_summary(
     band_low=(0.0, 14.0),
     band_high=(14.0, 55.0),
 ):
-    # Per-animal seizure/pre-seizure MSC ratio over time, split by frequency band. Two stacked
-    # panels (low band, high band) with a dashed line at ratio=1 (above => seizure more coherent).
+    # explainer: above the dashed ratio = 1 line means the seizure is more coherent
     animal = group_df["Animal_ID"].iloc[0]
     panels = [
         Panel(f"Coherence Ratio ({_band_label(band_low)}) | Animal: {animal}",
@@ -188,9 +173,7 @@ def plot_coherence_global_summary(
     band_high=(14.0, 55.0),
     day_zero: tuple[int, int, int] = _DEFAULT_DAY_ZERO,
 ):
-    # Global band-averaged coherence: all animals offset to Day 0, by animal.
-    # Two stacked panels (low band, high band). Within each, during-seizure values use filled
-    # markers and pre-seizure values use faded open markers in the same per-animal colour.
+    # decision: during-seizure filled, pre-seizure faded and open, same animal colour
     panels = [
         Panel(f"Global Average Coherence ({_band_label(band_low)})", "Avg MSC",
               _gdraw_seizure_pre("Avg_MSC_Seizure_Low", "Avg_MSC_Pre_Low"),
@@ -211,9 +194,6 @@ def plot_coherence_ratio_global_summary(
     band_high=(14.0, 55.0),
     day_zero: tuple[int, int, int] = _DEFAULT_DAY_ZERO,
 ):
-    # Global seizure/pre-seizure MSC ratio: all animals offset to Day 0, by animal.
-    # Two stacked panels (low band, high band). Each animal's seizure-to-pre ratio is scattered
-    # against experimental day in its own colour, with a dashed reference line at ratio=1.
     panels = [
         Panel(f"Global Coherence Ratio ({_band_label(band_low)})",
               "Seizure MSC / Pre-Seizure MSC",

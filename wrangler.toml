@@ -1,6 +1,6 @@
 name = "epilepsy-phase-delay"
 compatibility_date = "2025-01-01"
 
-# Serve the committed public/ folder as a static site (no server code, assets only).
+# decision: static site from the committed public/ folder, no server code
 [assets]
 directory = "./public"

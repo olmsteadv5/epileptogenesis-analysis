@@ -1,5 +1,3 @@
-# Phase-delay plots: per-seizure regression, per-animal exploration grids, and the
-# longitudinal phase-delay summaries (R2-coded and during-seizure-context variants).
 
 from __future__ import annotations
 
@@ -33,14 +31,11 @@ def plot_phase_delay_seizure(
     band_low=(0.0, 14.0),
     title: str | None = None,
 ):
-    # Per-seizure phase-vs-frequency regression: pre-seizure (left) vs during seizure (right).
-    # Each point is a coherent frequency bin, coloured by its MSC; the MSC-weighted linear fit is
-    # drawn through them and the resulting delay / R2 / bin count are annotated in the corner.
+    # explainer: each point is a coherent bin coloured by MSC, MSC-weighted fit through them, delay/R2/bins in the corner
     lo, hi = band_low
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharey=True, layout="constrained")
 
-    # (freqs, phase, unused-freqs, unused-phase, slope, intercept, msc-freqs, msc-curve,
-    #  tau, r2, nbins, label)
+    # explainer: (freqs, phase, unused-freqs, unused-phase, slope, intercept, msc-freqs, msc-curve, tau, r2, nbins, label)
     panels = [
         ("phase_pre_freqs", "phase_pre_values", "phase_pre_unused_freqs", "phase_pre_unused_values",
          "phase_pre_slope", "phase_pre_intercept", "freqs_pre", "msc_pre",
@@ -52,7 +47,7 @@ def plot_phase_delay_seizure(
 
     mappable = None
     for ax, (fk, vk, ufk, uvk, sk, ik, fmk, vmk, tauk, r2k, nbk, label) in zip(axes, panels):
-        # Discarded sub-threshold bins drawn first so they sit behind the used points.
+        # decision: grey discarded bins first so they sit behind the used ones
         uf = np.asarray(coh[ufk], dtype=float)
         uv = np.asarray(coh[uvk], dtype=float)
         if uf.size >= 1:
@@ -61,21 +56,17 @@ def plot_phase_delay_seizure(
         pf = np.asarray(coh[fk], dtype=float)
         pv = np.asarray(coh[vk], dtype=float)
 
-        # Only the bins that survived the MSC gate have points to draw.
         if pf.size >= 1:
-            # MSC at each used bin sets the point colour.
             msc_pts = np.interp(pf, np.asarray(coh[fmk]), np.asarray(coh[vmk]))
             mappable = ax.scatter(pf, pv, c=msc_pts, cmap=R2_CMAP, vmin=0.0, vmax=1.0,
                                   s=22, edgecolors="black", linewidths=0.3, zorder=3)
 
-            # Redraw the fitted line across the span of used bins.
             slope, intercept = coh[sk], coh[ik]
             if np.isfinite(slope):
                 xline = np.array([pf.min(), pf.max()])
                 ax.plot(xline, slope * xline + intercept, color=DURING_COLOR,
                         linewidth=1.5, zorder=2)
 
-        # Delay / fit-quality summary for this window.
         ax.text(0.03, 0.97,
                 f"τ = {coh[tauk]:.2f} ms\nR² = {coh[r2k]:.3f}\nbins = {coh[nbk]}",
                 transform=ax.transAxes, va="top", ha="left",
@@ -86,7 +77,6 @@ def plot_phase_delay_seizure(
 
     axes[0].set_ylabel("Unwrapped phase (rad)")
 
-    # Note explaining the grey points (raw phase of bins below the MSC gate, not fitted).
     grey_handle = plt.Line2D([0], [0], marker="o", linestyle="none", markerfacecolor="lightgray",
                              markeredgecolor="none", markersize=6,
                              label="Below MSC threshold (not used in fit)")
@@ -105,11 +95,9 @@ def plot_phase_by_animal(
     which: str = "seizure",
     align_phase: bool = True,
     phase_ylim=None,
-    color_by: str = "msc",     # "msc" -> opacity ; "colorbar" -> viridis + colorbar
+    color_by: str = "msc",  # explainer: msc = opacity, colorbar = viridis + colorbar
     alpha_floor: float = 0.08,
 ):
-    # One phase-vs-frequency panel per animal. Each point's MSC sets its opacity
-    # (color_by="msc") or its colour on a shared scale (color_by="colorbar").
     if which == "seizure":
         f_ph, v_ph = "phase_sz_freqs", "phase_sz_values"
         f_msc, v_msc = "freqs_seizure", "msc_seizure"
@@ -178,9 +166,7 @@ def plot_delay_distribution(
     nbins_min: int = 3,
     title: str | None = None,
 ):
-    # Box + strip plot of per-seizure phase delay, grouped by animal.
-    # Keeps only rows whose fit cleared r2_min and nbins_min so the distribution reflects
-    # trustworthy delays. Dots are individual seizures.
+    # decision: only fits that cleared r2_min and nbins_min, so the spread reflects delays we trust
     d = df[df[value_col].notna()].copy()
     if r2_col in d:
         d = d[d[r2_col].fillna(0) >= r2_min]
@@ -210,9 +196,7 @@ def plot_delay_distribution(
     return fig
 
 
-# Per-panel drawing strategy for the phase-delay summaries.
 def _draw_confidence(tau_col, r2_col, nbin_col, cmap):
-    # R^2-colored, bin-sized time-delay scatter + zero line (per-animal).
     def draw(ax, x, g):
         sc = ax.scatter(
             x, g[tau_col], c=g[r2_col], cmap=cmap, vmin=0.0, vmax=1.0,
@@ -224,22 +208,17 @@ def _draw_confidence(tau_col, r2_col, nbin_col, cmap):
     return draw
 
 
-# Keep only seizures whose phase-fit confidence clears the slider cutoff.
-# Confidence folds R2, bin count, and MSC weighting into one [0, 1] score (see compute_phase_delay).
+# explainer: confidence folds R2, bin count and MSC into one 0-1 score, see compute_phase_delay
 def _filter_phase_points(df, conf_min):
     return df[df["Phase_Confidence_Seizure"] >= conf_min]
 
 
-# Phase time-delay summaries
 def plot_phase_delay_animal_summary(
     group_df: pd.DataFrame,
     band_low=(0.0, 14.0),
     pre_seizure_secs: float = 30,
     cmap: str = R2_CMAP,
 ):
-    # Per-animal phase-derived time delay over time, weighted by fit confidence. Two stacked
-    # panels (during seizure, then pre-seizure baseline); each point is the delay in ms, colored
-    # by the phase-slope fit R2 and sized by the number of coherent bins behind it.
     animal = group_df["Animal_ID"].iloc[0]
     bin_legend = lambda ax, sc: _bin_size_legend(ax, sc, loc="upper right")
 
@@ -270,11 +249,7 @@ def plot_phase_delay_global_summary(
     ylim: tuple[float, float] | None = None,
     xlim: tuple | None = None,
 ):
-    # Global phase-derived time delay: all animals offset to Day 0, one point per seizure (during
-    # seizure only). Colour = phase-slope fit R2, size = coherent bins used, marker shape = animal,
-    # so the colour channel stays free for fit quality.
-    # conf_min drops seizures below that phase-fit confidence cutoff.
-    # ylim / xlim lock the axes so a sweep of frames stays on one comparable scale.
+    # decision: marker shape = animal so colour stays free for fit quality. ylim/xlim lock the axes across sweep frames
     normalized_df = _filter_phase_points(normalized_df, conf_min)
     animals = list(dict.fromkeys(normalized_df["Animal_ID"]))
     marker_for = {a: _ANIMAL_MARKERS[i % len(_ANIMAL_MARKERS)] for i, a in enumerate(animals)}
@@ -294,7 +269,6 @@ def plot_phase_delay_global_summary(
     def after(ax, sc):
         if sc is None:
             return
-        # Animal legend = marker shape (neutral colour); bin-size key beneath it.
         shape_handles = [
             plt.Line2D([0], [0], marker=marker_for[a], linestyle="none",
                        markerfacecolor="gray", markeredgecolor="black",
@@ -317,8 +291,7 @@ def plot_phase_delay_global_summary(
     )
 
 
-# Plotly symbols matched to the matplotlib markers used in the static charts, so animal
-# shapes stay consistent between the PNG and the interactive HTML.
+# decision: plotly symbols matched to the matplotlib markers so animals look the same in the PNG and the HTML
 _PLOTLY_MARKERS = ["circle", "square", "triangle-up", "diamond", "triangle-down",
                    "cross", "x", "star", "triangle-left", "triangle-right"]
 
@@ -334,10 +307,7 @@ def plot_phase_delay_global_interactive(
     xlim: tuple | None = None,
     path_cols=("Phase_Delay_Plot", "Coherence_Plot", "Correlation_Plot"),
 ):
-    # Interactive twin of plot_phase_delay_global_summary, written to a standalone HTML file.
-    # Hover shows each seizure's stats; clicking a point opens its per-seizure PNGs in new tabs.
-    # Marker shape = animal, colour = phase-slope fit R2, size = coherent bins, matching the PNG.
-    # A slider re-filters by phase-fit confidence; box/scroll zoom separates overlapping points.
+    # explainer: interactive twin of plot_phase_delay_global_summary. click a point to open its per-seizure PNGs
     import os
     from datetime import datetime
 
@@ -347,11 +317,10 @@ def plot_phase_delay_global_interactive(
     df = normalized_df.copy()
     animals = list(dict.fromkeys(df["Animal_ID"]))
 
-    # Fractional experimental days from the Day-0 epoch, preserving time of day.
     epoch = pd.Timestamp(datetime(*day_zero))
     df["_Day"] = (df["Normalized_DT"] - epoch).dt.total_seconds() / 86400.0
 
-    # Per-point links resolved relative to where the HTML lands, so file:// opening works.
+    # decision: links relative to where the HTML lands so it works from file://
     html_dir = os.path.dirname(os.path.abspath(html_path))
     def _rel(p):
         if isinstance(p, str) and p:
@@ -360,9 +329,8 @@ def plot_phase_delay_global_interactive(
     have_paths = all(c in df.columns for c in path_cols)
 
     def _stats(g):
-        # One stats string per row: animal, exact datetime, delay, fit quality, bins, severity.
         rac = ("<br>Racine = " + g["Racine_Scale"].astype(str)) if "Racine_Scale" in g else ""
-        # Prefer the real seizure datetime; fall back to file start, then the normalized timeline.
+        # decision: real seizure time first, then file start, then the normalized timeline
         when_col = next((c for c in ("Seizure_DT", "File_Start_DT", "Normalized_DT") if c in g),
                         "Normalized_DT")
         when = pd.to_datetime(g[when_col]).dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -376,8 +344,7 @@ def plot_phase_delay_global_interactive(
         ).tolist()
 
     def _custom(g):
-        # Each point carries [stats_html, phase_delay_url, coherence_url, correlation_url]. The
-        # custom hover card (see post_script) shows the stats and turns the urls into links.
+        # explainer: customdata = [stats_html, phase_delay_url, coherence_url, correlation_url], the hover card turns the urls into links
         stats = _stats(g)
         if have_paths:
             links = [[_rel(r[c]) for c in path_cols] for _, r in g.iterrows()]
@@ -385,8 +352,7 @@ def plot_phase_delay_global_interactive(
             links = [["", "", ""] for _ in range(len(g))]
         return [[stats[i]] + links[i] for i in range(len(g))]
 
-    # Per-trace (per-animal) arrays for one confidence cutoff, used both for the initial draw
-    # and for each slider step's restyle.
+    # explainer: per-animal arrays at one cutoff, used for the first draw and every slider restyle
     def arrays_for(conf):
         sub = df[df["Phase_Confidence_Seizure"] >= conf]
         xs, ys, sizes, colors, customs = [], [], [], [], []
@@ -409,14 +375,13 @@ def plot_phase_delay_global_interactive(
                 size=s0[i], color=c0[i], coloraxis="coloraxis", opacity=0.85,
                 line=dict(width=0.6, color="black"),
             ),
-            # Native hover label is suppressed; the custom card (post_script) shows stats + links.
+            # decision: native hover off, the custom card shows stats + links
             customdata=cd0[i], hoverinfo="none",
         ))
 
-    # Zero-delay reference line.
     fig.add_hline(y=0.0, line_dash="dash", line_color="gray", line_width=1)
 
-    # Confidence slider: each step restyles every trace with its arrays at that cutoff.
+    # explainer: each slider step restyles every trace with its arrays at that cutoff
     steps = np.round(np.arange(0.0, 1.0 + 1e-9, conf_step), 2)
     slider_steps = []
     for s in steps:
@@ -432,7 +397,7 @@ def plot_phase_delay_global_interactive(
         title=f"Population Phase Delay ({_band_label(band_low)}): Offset to Experimental Day 0",
         xaxis_title="Experimental Days (Starting from Day 0)",
         yaxis_title="Time Delay (ms)",
-        # Legend stacked above the colorbar on the right so the two no longer overlap.
+        # decision: legend above the colorbar so they don't overlap
         legend=dict(title="Animal", x=1.02, xanchor="left", y=1.0, yanchor="top"),
         coloraxis=dict(colorscale=R2_CMAP, cmin=0.0, cmax=1.0,
                        colorbar=dict(title="Phase-slope fit R²", x=1.02, xanchor="left",
@@ -442,9 +407,7 @@ def plot_phase_delay_global_interactive(
         template="simple_white", width=1150, height=680,
         margin=dict(r=170),
     )
-    # Lock the x-axis so moving the confidence slider never rescales it. Zoom/pan still work
-    # (the axis isn't fixedrange), and the restyle steps carry no range, so a manual zoom is kept
-    # too — the view only changes when you change it, never when you filter.
+    # decision: fixed x range so filtering never rescales it, zoom and pan still work
     if xlim is None:
         dmin, dmax = float(df["_Day"].min()), float(df["_Day"].max())
         pad = 0.02 * (dmax - dmin) if dmax > dmin else 1.0
@@ -453,9 +416,7 @@ def plot_phase_delay_global_interactive(
     if ylim is not None:
         fig.update_yaxes(range=list(ylim))
 
-    # Native Plotly tooltips can't hold clickable links (they vanish the moment the mouse leaves the
-    # point). So we suppress them and render our own card on hover instead. The card lingers ~0.4 s
-    # after unhover and cancels hiding once the mouse moves onto it, so its links stay clickable.
+    # decision: plotly tooltips vanish when the mouse leaves the point, so links can't be clicked. own card lingers briefly and stays while hovered
     post_script = """
     var gd = document.getElementById('{plot_id}');
 
@@ -496,22 +457,19 @@ def plot_phase_delay_global_interactive(
     """
 
     os.makedirs(html_dir, exist_ok=True)
-    # scrollZoom adds wheel zoom on top of Plotly's default box-zoom for separating clusters.
+    # decision: wheel zoom on top of box zoom to pull clusters apart
     fig.write_html(html_path, post_script=post_script, include_plotlyjs="cdn",
                    config={"scrollZoom": True, "displaylogo": False})
     return fig
 
 
-# During-seizure phase delay with seizure context (low band only)
 def plot_phase_delay_during_animal_summary(
     group_df: pd.DataFrame,
     band_low=(0.0, 14.0),
     racine_cmap: str = RACINE_CMAP,
     racine_max: int = RACINE_SCALE_MAX,
 ):
-    # Per-animal during-seizure phase delay (low band only) with seizure context.
-    # One point per seizure: y = time delay, colour = Racine severity, size = seizure duration.
-    # A faint trend line joins the seizures in time and a dashed line marks the mean delay.
+    # explainer: colour = Racine severity, size = seizure duration, dashed line = mean delay
     animal = group_df["Animal_ID"].iloc[0]
 
     def draw(ax, x, g):
@@ -521,7 +479,7 @@ def plot_phase_delay_during_animal_summary(
             vmin=1, vmax=racine_max, s=_duration_to_size(g["Seizure_Duration_Sec"]),
             alpha=0.9, edgecolors="black", linewidths=0.4, zorder=3,
         )
-        # Mean ignores seizures whose phase fit failed (NaN tau).
+        # decision: mean skips seizures whose phase fit failed (NaN tau)
         mean_val = float(np.nanmean(g["Tau_ms_Seizure"]))
         ax.axhline(mean_val, color=MEAN_COLOR, linestyle="--", linewidth=2,
                    label=f"Mean: {round(mean_val, 2)} ms")
@@ -549,9 +507,7 @@ def plot_phase_delay_during_global_summary(
     racine_max: int = RACINE_SCALE_MAX,
     conf_min: float = 0.0,
 ):
-    # Global during-seizure phase delay (low band only): all animals offset to Day 0, one point per
-    # seizure. y = time delay, colour = Racine severity, size = seizure duration, marker = animal.
-    # conf_min drops seizures below that phase-fit confidence cutoff.
+    # explainer: colour = Racine severity, size = duration, marker = animal. conf_min drops low-confidence fits
     normalized_df = _filter_phase_points(normalized_df, conf_min)
     animals = list(dict.fromkeys(normalized_df["Animal_ID"]))
     marker_for = {a: _ANIMAL_MARKERS[i % len(_ANIMAL_MARKERS)] for i, a in enumerate(animals)}
@@ -572,7 +528,6 @@ def plot_phase_delay_during_global_summary(
     def after(ax, sc):
         if sc is None:
             return
-        # Animal legend = marker shape (neutral colour); duration size key beneath it.
         shape_handles = [
             plt.Line2D([0], [0], marker=marker_for[a], linestyle="none",
                        markerfacecolor="gray", markeredgecolor="black",

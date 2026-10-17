@@ -1,4 +1,3 @@
-# 60-minute decimated EEG overview with seizure markers.
 
 from __future__ import annotations
 
@@ -24,8 +23,6 @@ def plot_overview(
     num_mins_per_subplot: int,
     num_subplots: int,
 ):
-    # 60-minute EEG overview: num_subplots stacked decimated traces, each showing
-    # num_mins_per_subplot minutes of both channels.
     samples_per_subplot = int(num_mins_per_subplot * 60 * samp_freq)
 
     fig, axes = plt.subplots(num_subplots, 1, figsize=(14, 11))
@@ -51,7 +48,7 @@ def plot_overview(
         min_start = plot_number * num_mins_per_subplot
         min_end = (plot_number + 1) * num_mins_per_subplot
 
-        # Overlay seizure onset/offset markers that fall in this subplot's minute range.
+        # explainer: only markers inside this subplot's minute range
         for _, row in seizures.iterrows():
             start_off_min = (row["SeizureStartDT"] - corrected_start).total_seconds() / 60.0
             end_off_min = (row["SeizureEndDT"] - corrected_start).total_seconds() / 60.0
